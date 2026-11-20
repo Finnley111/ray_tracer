@@ -84,7 +84,7 @@ static Image lights() {
 
 // RT-009: Cornell box (classic 555-unit dimensions), D65 area light.
 // Wall reflectances are smooth spectral curves, not RGB triples.
-static Image cornell(int spp) {
+static Image cornell(int spp, bool nee = true, unsigned seed = 1) {
     const int W = 400, H = 400;
     auto red = [](float l) { return 0.05f + 0.6f / (1 + std::exp(-(l - 600) / 12)); };
     std::vector<Material> mats = {
@@ -108,8 +108,9 @@ static Image cornell(int spp) {
     };
     rot_box({265, 0, 295}, {165, 330, 165}, 15);   // tall
     rot_box({130, 0, 65}, {165, 165, 165}, -18);   // short
+    sc.use_nee = nee;
     Camera cam({278, 278, -800}, {278, 278, 0}, {0, 1, 0}, 40, 1.0f);
-    return render(sc, mats, constant(0.0f), cam, W, H, spp, 1.0f);
+    return render(sc, mats, constant(0.0f), cam, W, H, spp, 1.0f, seed);
 }
 
 // RT-010: gold, copper, silver (measured n,k) and a 95% mirror under a D65 panel
@@ -291,9 +292,46 @@ static Image bunny(int spp) {
     return render(sc, mats, [s](float l) { return 0.3f * s(l); }, cam, W, H, spp, 1.0f);
 }
 
+// RT-016: Cornell box noise, NEE+MIS at 64 spp vs BSDF-only at 1024 spp. Noise is the
+// RMS difference between two independent renders / sqrt(2) (= per-image RMS error),
+// on display values clamped to [0,1].
+static Image neebench() {
+    auto stats = [](const Image& a, const Image& b, double& mean, double& noise) {
+        double m = 0, e = 0;
+        for (size_t i = 0; i < a.px.size(); ++i)
+            for (int k = 0; k < 3; ++k) {
+                // Display-referred: clamp to [0,1] so the light's anti-aliased edges
+                // (~100x brighter than the room) don't swamp the lighting noise.
+                double x = std::clamp(a.px[i][k], 0.0f, 1.0f), y = std::clamp(b.px[i][k], 0.0f, 1.0f);
+                m += (x + y) / 2;
+                double d = x - y;
+                e += d * d;
+            }
+        mean = m / (3.0 * a.px.size());
+        noise = std::sqrt(e / (3.0 * a.px.size()) / 2);
+    };
+    auto timed = [](auto f, double& t) {
+        auto t0 = std::chrono::steady_clock::now();
+        Image img = f();
+        t = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        return img;
+    };
+    double tn, tb, mn, nn, mb, nb;
+    Image n1 = timed([] { return cornell(64, true, 1); }, tn), n2 = cornell(64, true, 2);
+    Image b1 = timed([] { return cornell(1024, false, 1); }, tb), b2 = cornell(1024, false, 2);
+    stats(n1, n2, mn, nn);
+    stats(b1, b2, mb, nb);
+    std::fprintf(stderr, "NEE+MIS   64 spp: %5.1fs  mean %.4f  noise %.4f\n", tn, mn, nn);
+    std::fprintf(stderr, "BSDF    1024 spp: %5.1fs  mean %.4f  noise %.4f\n", tb, mb, nb);
+    std::fprintf(stderr, "noise ratio %.2fx lower with NEE at 1/16 the samples; means differ %.2f%%\n", nb / nn,
+                 100 * std::fabs(mn - mb) / mb);
+    write_ppm(b1, "renders/cornell_bsdf1024.ppm");
+    return n1;
+}
+
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals|glass|prism|prism-x|bvhbench|bunny> <out.ppm> [spp]\n");
+        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals|glass|prism|prism-x|bvhbench|bunny|neebench> <out.ppm> [spp]\n");
         return 2;
     }
     std::string mode = argv[1];
@@ -306,6 +344,7 @@ int main(int argc, char** argv) {
                 : mode == "prism-x" ? prism(argc > 3 ? std::atoi(argv[3]) : 4096, true)
                 : mode == "bvhbench" ? bvhbench()
                 : mode == "bunny"   ? bunny(argc > 3 ? std::atoi(argv[3]) : 256)
+                : mode == "neebench" ? neebench()
                                     : Image(0, 0);
     if (img.w == 0) {
         std::fprintf(stderr, "unknown mode %s (or scene failed to load)\n", argv[1]);

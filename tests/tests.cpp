@@ -145,7 +145,9 @@ int main() {
         // Exercises many bounces and Russian roulette.
         Scene sc;
         sc.spheres = {{{0, 0, 0}, 1, 0}};
-        float c = furnace(sc, {{constant(0.8f), constant(1.0f), 0.2f}}, constant(0.0f), {{0, 0, 0}, {1, 0, 0}});
+        Material glow{constant(0.8f), constant(1.0f), 0.2f};
+        glow.two_sided = true;  // seen from inside
+        float c = furnace(sc, {glow}, constant(0.0f), {{0, 0, 0}, {1, 0, 0}});
         std::printf("furnace inside: %.4f (1)\n", c);
         assert(near(c, 1, 0.02f));
     }
@@ -305,6 +307,50 @@ int main() {
         AABB b;
         for (auto& tr : t) { b.grow(tr.a); b.grow(tr.b); b.grow(tr.c); }
         assert(near(b.lo.y, 1, 1e-5f) && near(b.hi.y, 3, 1e-5f) && near((b.lo.x + b.hi.x) / 2, 5, 1e-5f));
+    }
+
+    // RT-016: NEE + MIS. Inside an emitting, reflecting sphere (sphere-light sampling from
+    // inside, shadow rays, MIS on both strategies) the answer is still e / (1 - a) = 1.
+    {
+        Scene sc;
+        sc.spheres = {{{0, 0, 0}, 1, 0}};
+        std::vector<Material> mats = {{constant(0.8f), constant(1.0f), 0.2f}};
+        mats[0].two_sided = true;
+        sc.collect_lights(mats);
+        assert(sc.lights.size() == 1);
+        float c = furnace(sc, mats, constant(0.0f), {{0, 0, 0}, {1, 0, 0}});
+        std::printf("furnace inside, NEE: %.4f (1)\n", c);
+        assert(near(c, 1, 0.02f));
+    }
+    // RT-016: one-sided light: a downward panel lights the floor below, not a camera above it.
+    {
+        std::vector<Material> mats = {{constant(0.5f)}, {constant(0.0f), d65(), 1.0f}};
+        Scene sc;
+        sc.quads = {{{-1, 1, -1}, {2, 0, 0}, {0, 0, 2}, 1}};  // u x v = -y: emits downward
+        sc.collect_lights(mats);
+        Rng rng(1);
+        auto w = SampledWavelengths::sample_uniform(0.5f);
+        assert(trace(sc, mats, constant(0.0f), {{0, 0, 0}, {0, 1, 0}}, w, rng)[0] > 0);   // from below
+        assert(trace(sc, mats, constant(0.0f), {{0, 2, 0}, {0, -1, 0}}, w, rng)[0] == 0);  // from above
+    }
+    // RT-016: NEE on and off agree in the mean (quad + sphere light, occluder).
+    {
+        std::vector<Material> mats = {{constant(0.6f)}, {[](float l) { return 0.1f + 0.7f * gaussian(500, 40)(l); }},
+                                      {constant(0.0f), blackbody(4000), 8.0f}, {constant(0.0f), d65(), 30.0f}};
+        Scene sc;
+        sc.quads = {{{-3, 0, -3}, {0, 0, 6}, {6, 0, 0}, 0}, {{-0.5f, 2, -0.5f}, {1, 0, 0}, {0, 0, 1}, 2}};
+        sc.spheres = {{{0.5f, 0.5f, 0.2f}, 0.5f, 1}, {{-1.2f, 1.2f, 0}, 0.15f, 3}};
+        Camera cam({0, 1.5f, 4}, {0, 0.3f, 0}, {0, 1, 0}, 45, 1);
+        Image on = render(sc, mats, constant(0.0f), cam, 24, 24, 256, 1);
+        sc.use_nee = false;
+        Image off = render(sc, mats, constant(0.0f), cam, 24, 24, 4096, 1);
+        double a[3] = {0, 0, 0}, b[3] = {0, 0, 0};
+        for (size_t i = 0; i < on.px.size(); ++i)
+            for (int k = 0; k < 3; ++k) a[k] += on.px[i][k], b[k] += off.px[i][k];
+        std::printf("NEE on vs off mean RGB: %.4f %.4f %.4f | %.4f %.4f %.4f\n", a[0] / on.px.size(),
+                    a[1] / on.px.size(), a[2] / on.px.size(), b[0] / on.px.size(), b[1] / on.px.size(),
+                    b[2] / on.px.size());
+        for (int k = 0; k < 3; ++k) assert(std::fabs(a[k] - b[k]) / b[k] < 0.02);
     }
 
     std::printf("OK\n");

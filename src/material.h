@@ -15,7 +15,8 @@ struct Rng {
 
 enum class Kind { Diffuse, Mirror, Conductor, Dielectric };
 
-// Any material may also emit (two-sided). Fields used per kind:
+// Any material may also emit. Emission leaves the front side only (quad: along u x v,
+// sphere: outward) unless two_sided. Fields used per kind:
 //   Diffuse: albedo.  Mirror: albedo = reflectance.  Conductor: eta, k (smooth, Fresnel).
 //   Dielectric: eta (smooth glass, in air; wavelength-dependent eta = dispersion).
 struct Material {
@@ -24,6 +25,7 @@ struct Material {
     float emission_scale = 0.0f;  // 0 = not a light
     Kind kind = Kind::Diffuse;
     Spectrum eta = constant(1.0f), k = constant(0.0f);
+    bool two_sided = false;
 };
 
 inline Material mirror(Spectrum r) { return {r, constant(0), 0, Kind::Mirror}; }

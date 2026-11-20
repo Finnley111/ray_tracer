@@ -56,15 +56,23 @@ inline bool roulette(int depth, SampledSpectrum& beta, Rng& rng) {
     return true;
 }
 
-// Unidirectional path tracer, BSDF sampling only (NEE + MIS in RT-016).
+inline float power_heuristic(float a, float b) { return a * a / (a * a + b * b); }
+
+// Path tracer with next-event estimation at diffuse vertices, combined with BSDF
+// sampling by the power heuristic (MIS). NEE uses scene.lights; with none (or
+// scene.use_nee false) it is plain BSDF sampling.
 // Returns radiance at the path's 4 wavelengths. May terminate the secondary
 // wavelengths in w (dispersion), so pass the same w on to to_xyz.
 // skip_diffuse_first: stop after the first hit if it is diffuse (the light tracer
 // covers those paths in render_hybrid); emission seen directly is still counted.
 inline SampledSpectrum trace(const Scene& scene, const std::vector<Material>& mats, const Spectrum& background,
                              Ray ray, SampledWavelengths& w, Rng& rng, bool skip_diffuse_first = false) {
+    constexpr float INV_PI = std::numbers::inv_pi_v<float>;
+    const bool nee = scene.use_nee && !scene.lights.empty();
+    const float n_lights = float(scene.lights.size());
     SampledSpectrum L, beta;
     beta.v.fill(1.0f);
+    float prev_pdf_bsdf = 0;  // solid-angle pdf of the last diffuse bounce; 0 = camera/specular
     for (int depth = 0; depth < MAX_DEPTH; ++depth) {
         Hit h;
         if (!scene.intersect(ray, 1e-4f, 1e30f, h)) {
@@ -72,9 +80,40 @@ inline SampledSpectrum trace(const Scene& scene, const std::vector<Material>& ma
             break;
         }
         const Material& m = mats[h.mat];
-        if (m.emission_scale > 0) L += beta * w.eval(m.emission) * m.emission_scale;
+        if (m.emission_scale > 0 && (h.front || m.two_sided)) {
+            // BSDF-sampled hit on a light NEE could also have sampled: MIS weight it.
+            float wt = 1;
+            if (nee && prev_pdf_bsdf > 0 && h.shape != 2) {
+                float len = length(ray.d), cos_l = std::fabs(dot(ray.d, h.n)) / len, d = h.t * len;
+                wt = power_heuristic(prev_pdf_bsdf, d * d / (cos_l * h.area * n_lights));
+            }
+            L += beta * w.eval(m.emission) * (m.emission_scale * wt);
+        }
         if (skip_diffuse_first && depth == 0 && m.kind == Kind::Diffuse) break;
+
+        if (m.kind == Kind::Diffuse && nee) {
+            // Next-event estimation: one uniformly chosen light, uniform point on it.
+            const auto& l = scene.lights[std::min(int(rng.next() * n_lights), int(n_lights) - 1)];
+            Vec3 p, ln;
+            float area;
+            int lmat;
+            scene.sample_light(l, rng.next(), rng.next(), p, ln, area, lmat);
+            Vec3 to = p - h.p;
+            float d2 = dot(to, to), d = std::sqrt(d2);
+            Vec3 wi = to / d;
+            const Material& lm = mats[lmat];
+            float cos_s = dot(wi, h.n), cos_l = -dot(wi, ln);
+            if (lm.two_sided) cos_l = std::fabs(cos_l);
+            Hit occ;
+            if (cos_s > 0 && cos_l > 0 && !scene.intersect({h.p, wi}, 1e-4f, d * (1 - 1e-3f), occ)) {
+                float pdf_l = d2 / (cos_l * area * n_lights), pdf_b = cos_s * INV_PI;
+                L += beta * w.eval(m.albedo) * w.eval(lm.emission) *
+                     (lm.emission_scale * INV_PI * cos_s * power_heuristic(pdf_l, pdf_b) / pdf_l);
+            }
+        }
+
         scatter(m, h, ray, w, beta, rng);
+        prev_pdf_bsdf = m.kind == Kind::Diffuse ? std::max(0.0f, dot(ray.d, h.n)) * INV_PI : 0;
         if (!roulette(depth, beta, rng)) break;
     }
     return L;
@@ -104,6 +143,7 @@ inline Image render(Scene scene, const std::vector<Material>& mats, const Spectr
                     const Camera& cam, int W, int H, int spp, float exposure, unsigned seed = 1,
                     unsigned threads = std::thread::hardware_concurrency(), bool skip_diffuse_first = false) {
     if (!scene.built()) scene.build();
+    scene.collect_lights(mats);
     Image img(W, H);
     std::atomic<int> next_row{0};
     auto worker = [&] {
@@ -122,7 +162,7 @@ inline Image render(Scene scene, const std::vector<Material>& mats, const Spectr
 
 // Trace one path from a random emissive quad. At every diffuse vertex, connect to the
 // pinhole camera and splat into film (XYZ, W*H). n_paths = total paths over all threads.
-// Lights are two-sided: side chosen with p = 1/2, direction cosine-weighted.
+// Emission is cosine-weighted about the front normal (two-sided lights: random side).
 inline void light_path(const Scene& scene, const std::vector<Material>& mats, const std::vector<int>& lights,
                        const Camera& cam, int W, int H, double n_paths, std::vector<XYZ>& film, Rng& rng) {
     const Quad& L = scene.quads[lights[std::min(int(rng.next() * lights.size()), int(lights.size()) - 1)]];
@@ -130,10 +170,14 @@ inline void light_path(const Scene& scene, const std::vector<Material>& mats, co
     Vec3 ln = cross(L.u, L.v);
     float area = length(ln);
     ln = ln / area;
-    if (rng.next() < 0.5f) ln = -ln;
+    float sides = 1;
+    if (lm.two_sided) {
+        sides = 2;
+        if (rng.next() < 0.5f) ln = -ln;
+    }
     auto w = SampledWavelengths::sample_uniform(rng.next());
-    // beta = Le * cos / (p_light * p_area * p_dir), p_dir = 0.5 * cos / pi
-    SampledSpectrum beta = w.eval(lm.emission) * (lm.emission_scale * area * lights.size() * 2 * std::numbers::pi_v<float>);
+    // beta = Le * cos / (p_light * p_area * p_dir), p_dir = cos / (pi * sides)
+    SampledSpectrum beta = w.eval(lm.emission) * (lm.emission_scale * area * lights.size() * sides * std::numbers::pi_v<float>);
     Ray ray{L.q + L.u * rng.next() + L.v * rng.next(), sample_cosine_hemisphere(ln, rng.next(), rng.next())};
     const float splat = float(W) * H / (n_paths * cam.film_area);
 

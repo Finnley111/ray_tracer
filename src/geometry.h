@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <initializer_list>
+#include <numbers>
 #include <utility>
 #include <vector>
 
@@ -12,6 +13,8 @@ struct Hit {
     Vec3 n;      // unit normal, always facing against the incoming ray
     bool front;  // true if the ray hit the outside of the surface
     int mat;     // index into the scene's material list
+    int shape;   // 0 sphere, 1 quad, 2 triangle
+    float area;  // surface area of the shape hit (light pdf for MIS)
 };
 
 // Orient the stored normal against the ray; remember which side we hit.
@@ -39,6 +42,8 @@ struct Sphere {
         h.p = ray.at(t);
         set_normal(h, ray, (h.p - c) / r);
         h.mat = mat;
+        h.shape = 0;
+        h.area = 4 * std::numbers::pi_v<float> * r * r;
         return true;
     }
 };
@@ -60,8 +65,10 @@ struct Quad {
         if (a < 0 || a > 1 || b < 0 || b > 1) return false;
         h.t = t;
         h.p = ray.at(t);
-        set_normal(h, ray, normalize(n));
+        h.area = length(n);
+        set_normal(h, ray, n / h.area);
         h.mat = mat;
+        h.shape = 1;
         return true;
     }
 };
@@ -87,8 +94,11 @@ struct Triangle {
         if (t <= tmin || t >= tmax) return false;
         h.t = t;
         h.p = ray.at(t);
-        set_normal(h, ray, normalize(cross(e1, e2)));
+        Vec3 n = cross(e1, e2);
+        h.area = length(n) / 2;
+        set_normal(h, ray, n / (2 * h.area));
         h.mat = mat;
+        h.shape = 2;
         return true;
     }
 };
@@ -142,6 +152,38 @@ struct Scene {
     struct Node { AABB box; int start, count, right, axis; };  // leaf if count > 0
     std::vector<Prim> prims;
     std::vector<Node> nodes;
+
+    // Lights for next-event estimation: every emissive sphere and quad (emissive
+    // triangles are not sampled; MIS gives them full BSDF weight).
+    struct Light { int shape, idx; };
+    std::vector<Light> lights;
+    bool use_nee = true;
+
+    template <class M>
+    void collect_lights(const std::vector<M>& mats) {
+        lights.clear();
+        for (int i = 0; i < int(spheres.size()); ++i) if (mats[spheres[i].mat].emission_scale > 0) lights.push_back({0, i});
+        for (int i = 0; i < int(quads.size()); ++i) if (mats[quads[i].mat].emission_scale > 0) lights.push_back({1, i});
+    }
+
+    // Uniform point on light l: position, unit normal, area, material.
+    void sample_light(const Light& l, float r1, float r2, Vec3& p, Vec3& n, float& area, int& mat) const {
+        if (l.shape == 0) {
+            const Sphere& s = spheres[l.idx];
+            float z = 1 - 2 * r1, rr = std::sqrt(std::max(0.0f, 1 - z * z)), phi = 2 * std::numbers::pi_v<float> * r2;
+            n = {rr * std::cos(phi), rr * std::sin(phi), z};
+            p = s.c + n * s.r;
+            area = 4 * std::numbers::pi_v<float> * s.r * s.r;
+            mat = s.mat;
+        } else {
+            const Quad& q = quads[l.idx];
+            Vec3 c = cross(q.u, q.v);
+            area = length(c);
+            n = c / area;
+            p = q.q + q.u * r1 + q.v * r2;
+            mat = q.mat;
+        }
+    }
 
     bool built() const { return !nodes.empty(); }
 
