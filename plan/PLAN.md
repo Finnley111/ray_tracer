@@ -50,3 +50,4 @@ See `TIMELINE.md` for dates and `tickets/` for the breakdown.
 - **M4 Spectral materials** — mirror, dispersive dielectric, hero-wavelength collapse, prism scene.
 - **M5 Performance** — BVH, multithreading, OBJ meshes.
 - **M6 Quality** — NEE + MIS, RGB→spectrum upsampling, PNG output, simple scene file.
+- **M7 BDPT** (stretch) — bidirectional path tracing with MIS, replacing the hybrid for caustic-heavy scenes.
