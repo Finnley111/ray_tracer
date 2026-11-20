@@ -82,6 +82,23 @@ static Image lights() {
     return render(scene, mats, constant(0.0f), cam, W, H, SPP, 1.0f);
 }
 
+// Classic 555-unit Cornell room: walls + downward ceiling light (one-sided, u x v = -y).
+static void add_cornell_room(Scene& sc, int white, int red, int green, int light) {
+    sc.quads.insert(sc.quads.end(), {
+        {{555, 0, 0}, {0, 555, 0}, {0, 0, 555}, red},          // left (camera's left is +x)
+        {{0, 0, 0}, {0, 555, 0}, {0, 0, 555}, green},          // right
+        {{0, 0, 0}, {555, 0, 0}, {0, 0, 555}, white},          // floor
+        {{0, 555, 0}, {555, 0, 0}, {0, 0, 555}, white},        // ceiling
+        {{0, 0, 555}, {555, 0, 0}, {0, 555, 0}, white},        // back
+        {{343, 554, 332}, {-130, 0, 0}, {0, 0, -105}, light},  // light
+    });
+}
+static void add_rot_box(Scene& sc, Vec3 p, Vec3 size, float deg, int mat) {
+    float r = deg * std::numbers::pi_v<float> / 180, c = std::cos(r), s = std::sin(r);
+    add_box(sc.quads, p, Vec3{c, 0, -s} * size.x, {0, size.y, 0}, Vec3{s, 0, c} * size.z, mat);
+}
+static Camera cornell_camera() { return Camera({278, 278, -800}, {278, 278, 0}, {0, 1, 0}, 40, 1.0f); }
+
 // RT-009: Cornell box (classic 555-unit dimensions), D65 area light.
 // Wall reflectances are smooth spectral curves, not RGB triples.
 static Image cornell(int spp, bool nee = true, unsigned seed = 1) {
@@ -94,22 +111,11 @@ static Image cornell(int spp, bool nee = true, unsigned seed = 1) {
         {constant(0.0f), d65(), 15.0f},                                 // 3 light
     };
     Scene sc;
-    sc.quads = {
-        {{555, 0, 0}, {0, 555, 0}, {0, 0, 555}, 1},        // left (camera's left is +x)
-        {{0, 0, 0}, {0, 555, 0}, {0, 0, 555}, 2},          // right
-        {{0, 0, 0}, {555, 0, 0}, {0, 0, 555}, 0},          // floor
-        {{0, 555, 0}, {555, 0, 0}, {0, 0, 555}, 0},        // ceiling
-        {{0, 0, 555}, {555, 0, 0}, {0, 555, 0}, 0},        // back
-        {{343, 554, 332}, {-130, 0, 0}, {0, 0, -105}, 3},  // light
-    };
-    auto rot_box = [&](Vec3 p, Vec3 size, float deg) {
-        float r = deg * std::numbers::pi_v<float> / 180, c = std::cos(r), s = std::sin(r);
-        add_box(sc.quads, p, Vec3{c, 0, -s} * size.x, {0, size.y, 0}, Vec3{s, 0, c} * size.z, 0);
-    };
-    rot_box({265, 0, 295}, {165, 330, 165}, 15);   // tall
-    rot_box({130, 0, 65}, {165, 165, 165}, -18);   // short
+    add_cornell_room(sc, 0, 1, 2, 3);
+    add_rot_box(sc, {265, 0, 295}, {165, 330, 165}, 15, 0);   // tall
+    add_rot_box(sc, {130, 0, 65}, {165, 165, 165}, -18, 0);   // short
     sc.use_nee = nee;
-    Camera cam({278, 278, -800}, {278, 278, 0}, {0, 1, 0}, 40, 1.0f);
+    Camera cam = cornell_camera();
     return render(sc, mats, constant(0.0f), cam, W, H, spp, 1.0f, seed);
 }
 
@@ -329,9 +335,40 @@ static Image neebench() {
     return n1;
 }
 
+// RT-017: showcase. Cornell room with RGB-authored walls (Smits upsampling), a 3000 K
+// blackbody ceiling light, an SF11 glass prism and a gold sphere (measured n,k).
+// hybrid: light tracing for diffuse-first paths, so the prism/gold caustics on the
+// floor converge; spp is then light paths per pixel (camera paths fixed at 512).
+static Image showcase(int spp, bool hybrid) {
+    const int W = 500, H = 500;
+    std::vector<Material> mats = {
+        {rgb_spectrum(0.73f, 0.73f, 0.73f)},         // 0 white
+        {rgb_spectrum(0.65f, 0.05f, 0.05f)},         // 1 red
+        {rgb_spectrum(0.12f, 0.45f, 0.15f)},         // 2 green
+        {constant(0.0f), blackbody(3000), 40.0f},    // 3 light
+        dielectric(glass_sf11()),                    // 4 prism
+        conductor(au_eta(), au_k()),                 // 5 gold
+    };
+    Scene sc;
+    add_cornell_room(sc, 0, 1, 2, 3);
+    add_rot_box(sc, {265, 0, 295}, {165, 330, 165}, 15, 0);  // tall box, back left
+    sc.spheres = {{{150, 90, 190}, 90, 5}};                   // gold sphere, front right
+    // Equilateral SF11 prism standing front left, rotated 20 degrees.
+    const float S = 150, PH = 230, Ht = S * std::sqrt(3.0f) / 2, a = 20 * std::numbers::pi_v<float> / 180;
+    auto rot = [&](float x, float z) { return Vec3{390 + x * std::cos(a) - z * std::sin(a), 0, 140 + x * std::sin(a) + z * std::cos(a)}; };
+    Vec3 A = rot(0, 2 * Ht / 3), B1 = rot(-S / 2, -Ht / 3), B2 = rot(S / 2, -Ht / 3), up{0, PH, 0};
+    sc.tris = {{A, B1, B2, 4}, {A + up, B1 + up, B2 + up, 4}};
+    for (auto [p, q] : {std::pair{A, B1}, {B1, B2}, {B2, A}})
+        sc.tris.insert(sc.tris.end(), {{p, q, q + up, 4}, {p, q + up, p + up, 4}});
+    orient_convex(sc.tris);
+    Camera cam = cornell_camera();
+    if (hybrid) return render_hybrid(sc, mats, cam, W, H, 512, long(spp) * W * H, 1.0f);
+    return render(sc, mats, constant(0.0f), cam, W, H, spp, 1.0f);
+}
+
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals|glass|prism|prism-x|bvhbench|bunny|neebench> <out.ppm> [spp]\n");
+        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals|glass|prism|prism-x|bvhbench|bunny|neebench|showcase|showcase-pt> <out.ppm> [spp]\n");
         return 2;
     }
     std::string mode = argv[1];
@@ -345,6 +382,8 @@ int main(int argc, char** argv) {
                 : mode == "bvhbench" ? bvhbench()
                 : mode == "bunny"   ? bunny(argc > 3 ? std::atoi(argv[3]) : 256)
                 : mode == "neebench" ? neebench()
+                : mode == "showcase" ? showcase(argc > 3 ? std::atoi(argv[3]) : 1024, true)
+                : mode == "showcase-pt" ? showcase(argc > 3 ? std::atoi(argv[3]) : 1024, false)
                                     : Image(0, 0);
     if (img.w == 0) {
         std::fprintf(stderr, "unknown mode %s (or scene failed to load)\n", argv[1]);

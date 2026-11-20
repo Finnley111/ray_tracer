@@ -353,5 +353,28 @@ int main() {
         for (int k = 0; k < 3; ++k) assert(std::fabs(a[k] - b[k]) / b[k] < 0.02);
     }
 
+    // RT-017: Smits RGB -> spectrum round trip. Reflectance under D65 (normalised so white
+    // -> Y = 1) back to linear sRGB should land near the input colour.
+    {
+        Spectrum illum = d65();
+        float yn = spectrum_to_xyz(illum)[1];
+        auto round_trip = [&](float r, float g, float b) {
+            Spectrum refl = rgb_spectrum(r, g, b);
+            XYZ c = spectrum_to_xyz([&](float l) { return illum(l) * refl(l); });
+            return xyz_to_linear_srgb({c[0] / yn, c[1] / yn, c[2] / yn});
+        };
+        float worst = 0;
+        for (RGB in : {RGB{1, 1, 1}, RGB{0.73f, 0.73f, 0.73f}, RGB{0.65f, 0.05f, 0.05f}, RGB{0.12f, 0.45f, 0.15f},
+                       RGB{0.2f, 0.3f, 0.8f}, RGB{0.9f, 0.8f, 0.1f}, RGB{0.5f, 0.2f, 0.6f}}) {
+            RGB out = round_trip(in[0], in[1], in[2]);
+            for (int k = 0; k < 3; ++k) worst = std::max(worst, std::fabs(out[k] - in[k]));
+            std::printf("rgb (%.2f %.2f %.2f) -> (%.3f %.3f %.3f)\n", in[0], in[1], in[2], out[0], out[1], out[2]);
+        }
+        std::printf("Smits round trip worst channel error %.3f\n", worst);
+        assert(worst < 0.08f);
+        Spectrum white = rgb_spectrum(1, 1, 1);
+        assert(white(500) > 0.99f && white(380) > 0.99f);
+    }
+
     std::printf("OK\n");
 }

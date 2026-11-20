@@ -57,6 +57,38 @@ inline Spectrum d65() {
     return sampled(std::move(pts));
 }
 
+// ---- RGB -> reflectance spectrum (Smits 1999, "An RGB-to-Spectrum Conversion for
+// Reflectances"). Seven basis spectra at 10 points spanning 380-720 nm; the RGB is
+// split into white + one secondary + one primary. Output is a smooth-ish reflectance
+// whose colour under D65 approximates the (linear sRGB) input.
+inline Spectrum rgb_spectrum(float r, float g, float b) {
+    static const float basis[7][10] = {
+        {1.0000f, 1.0000f, 0.9999f, 0.9993f, 0.9992f, 0.9998f, 1.0000f, 1.0000f, 1.0000f, 1.0000f},  // white
+        {0.9710f, 0.9426f, 1.0007f, 1.0007f, 1.0007f, 1.0007f, 0.1564f, 0.0000f, 0.0000f, 0.0000f},  // cyan
+        {1.0000f, 1.0000f, 0.9685f, 0.2229f, 0.0000f, 0.0458f, 0.8369f, 1.0000f, 1.0000f, 0.9959f},  // magenta
+        {0.0001f, 0.0000f, 0.1088f, 0.6651f, 1.0000f, 1.0000f, 0.9996f, 0.9586f, 0.9685f, 0.9840f},  // yellow
+        {0.1012f, 0.0515f, 0.0000f, 0.0000f, 0.0000f, 0.0000f, 0.8325f, 1.0149f, 1.0149f, 1.0149f},  // red
+        {0.0000f, 0.0000f, 0.0273f, 0.7937f, 1.0000f, 0.9418f, 0.1719f, 0.0000f, 0.0000f, 0.0025f},  // green
+        {1.0000f, 1.0000f, 0.8916f, 0.3323f, 0.0000f, 0.0000f, 0.0003f, 0.0369f, 0.0483f, 0.0496f},  // blue
+    };
+    enum { W, C, M, Y, R, G, B };
+    float c[10] = {};
+    auto add = [&](int k, float a) { for (int i = 0; i < 10; ++i) c[i] += a * basis[k][i]; };
+    if (r <= g && r <= b) {
+        add(W, r);
+        if (g <= b) { add(C, g - r); add(B, b - g); } else { add(C, b - r); add(G, g - b); }
+    } else if (g <= r && g <= b) {
+        add(W, g);
+        if (r <= b) { add(M, r - g); add(B, b - r); } else { add(M, b - g); add(R, r - b); }
+    } else {
+        add(W, b);
+        if (r <= g) { add(Y, r - b); add(G, g - r); } else { add(Y, g - b); add(R, r - g); }
+    }
+    std::vector<std::pair<float, float>> pts;
+    for (int i = 0; i < 10; ++i) pts.push_back({380.0f + i * 340.0f / 9, std::max(0.0f, c[i])});
+    return sampled(std::move(pts));
+}
+
 // ---- Index of refraction (lambda in nm; coefficients in micrometres) ----
 
 // Cauchy: n = A + B / lambda^2.
