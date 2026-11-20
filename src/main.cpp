@@ -4,6 +4,7 @@
 #include "image.h"
 #include "integrator.h"
 #include "material.h"
+#include "metals.h"
 #include "spectrum.h"
 #include <cstdio>
 #include <cstdlib>
@@ -109,15 +110,38 @@ static Image cornell(int spp) {
     return render(sc, mats, constant(0.0f), cam, W, H, spp, 1.0f);
 }
 
+// RT-010: gold, copper, silver (measured n,k) and a 95% mirror under a D65 panel
+// and a dim D65 sky. Metal colours come only from the spectral Fresnel term.
+static Image metals(int spp) {
+    const int W = 640, H = 300;
+    std::vector<Material> mats = {
+        {constant(0.73f)},                   // 0 floor
+        conductor(au_eta(), au_k()),         // 1 gold
+        conductor(cu_eta(), cu_k()),         // 2 copper
+        conductor(ag_eta(), ag_k()),         // 3 silver
+        mirror(constant(0.95f)),             // 4 mirror
+        {constant(0.0f), d65(), 6.0f},       // 5 light
+    };
+    Scene sc;
+    sc.spheres = {{{-3.3f, 1, 0}, 1, 1}, {{-1.1f, 1, 0}, 1, 2}, {{1.1f, 1, 0}, 1, 3}, {{3.3f, 1, 0}, 1, 4}};
+    sc.quads = {{{-20, 0, -20}, {0, 0, 40}, {40, 0, 0}, 0},
+                {{-3, 6, -1}, {6, 0, 0}, {0, 0, 2}, 5}};
+    Spectrum s = d65();
+    Spectrum sky = [s](float l) { return 0.4f * s(l); };
+    Camera cam({0, 2.2f, 8}, {0, 1, 0}, {0, 1, 0}, 35, float(W) / H);
+    return render(sc, mats, sky, cam, W, H, spp, 1.0f);
+}
+
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell> <out.ppm> [spp]\n");
+        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals> <out.ppm> [spp]\n");
         return 2;
     }
     std::string mode = argv[1];
     Image img = mode == "swatch" ? swatch() : mode == "normals" ? normals()
                 : mode == "lights"  ? lights()
                 : mode == "cornell" ? cornell(argc > 3 ? std::atoi(argv[3]) : 1024)
+                : mode == "metals"  ? metals(argc > 3 ? std::atoi(argv[3]) : 256)
                                     : Image(0, 0);
     if (img.w == 0) {
         std::fprintf(stderr, "unknown mode %s\n", argv[1]);

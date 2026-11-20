@@ -27,9 +27,22 @@ inline SampledSpectrum trace(const Scene& scene, const std::vector<Material>& ma
         const Material& m = mats[h.mat];
         if (m.emission_scale > 0) L += beta * w.eval(m.emission) * m.emission_scale;
 
-        // Lambertian with cosine sampling: f*cos/pdf = albedo.
-        beta *= w.eval(m.albedo);
-        ray = {h.p, sample_cosine_hemisphere(h.n, rng.next(), rng.next())};
+        if (m.kind == Kind::Diffuse) {
+            // Lambertian with cosine sampling: f*cos/pdf = albedo.
+            beta *= w.eval(m.albedo);
+            ray = {h.p, sample_cosine_hemisphere(h.n, rng.next(), rng.next())};
+        } else {
+            // Perfect specular reflection: weight is the reflectance.
+            Vec3 d = normalize(ray.d);
+            if (m.kind == Kind::Mirror) {
+                beta *= w.eval(m.albedo);
+            } else {
+                float cos_i = -dot(d, h.n);
+                for (int i = 0; i < N_LAMBDA; ++i)
+                    beta[i] *= fresnel_conductor(cos_i, m.eta(w.lambda[i]), m.k(w.lambda[i]));
+            }
+            ray = {h.p, reflect(d, h.n)};
+        }
 
         if (depth >= RR_START) {
             float q = std::max(0.05f, 1 - *std::max_element(beta.v.begin(), beta.v.end()));

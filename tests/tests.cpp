@@ -4,6 +4,7 @@
 #include "geometry.h"
 #include "camera.h"
 #include "integrator.h"
+#include "metals.h"
 #include <random>
 #include <cassert>
 #include <cmath>
@@ -155,6 +156,34 @@ int main() {
         Image a = render(sc, mats, d65(), cam, 16, 16, 8, 1, 5, 1);
         Image b = render(sc, mats, d65(), cam, 16, 16, 8, 1, 5, 4);
         assert(a.px == b.px);
+    }
+
+    // RT-010: Fresnel. Glass at normal incidence 4%; conductor matches the closed form; grazing -> 1.
+    {
+        assert(near(fresnel_conductor(1, 1.5f, 0), 0.04f, 1e-5f));
+        float n = 0.43f, k = 2.455f;  // gold @ 549 nm
+        assert(near(fresnel_conductor(1, n, k), ((n - 1) * (n - 1) + k * k) / ((n + 1) * (n + 1) + k * k), 1e-5f));
+        assert(near(fresnel_conductor(0, n, k), 1, 1e-4f));
+    }
+    // RT-010: normal-incidence reflectance under D65 gives the right metal colours.
+    {
+        auto colour = [](Spectrum eta, Spectrum k) {
+            Spectrum d = d65();
+            return xyz_to_linear_srgb(spectrum_to_xyz([&](float l) { return d(l) * fresnel_conductor(1, eta(l), k(l)); }));
+        };
+        RGB au = colour(au_eta(), au_k()), cu = colour(cu_eta(), cu_k()), ag = colour(ag_eta(), ag_k());
+        std::printf("Au %.3f %.3f %.3f | Cu %.3f %.3f %.3f | Ag %.3f %.3f %.3f\n",
+                    au[0], au[1], au[2], cu[0], cu[1], cu[2], ag[0], ag[1], ag[2]);
+        assert(au[0] > au[1] && au[1] > au[2] && au[0] > 1.5f * au[2]);       // gold: yellow
+        assert(cu[0] > 1.3f * cu[1] && cu[1] > cu[2]);                          // copper: orange-red
+        assert(near(ag[0] / ag[2], 1, 0.15f) && ag[1] > 0.85f);                // silver: bright, neutral
+    }
+    {
+        // Mirror furnace: a 100% mirror sphere under a sky of 1 -> 1.
+        Scene sc;
+        sc.spheres = {{{0, 0, -3}, 1, 0}};
+        float m = furnace(sc, {mirror(constant(1.0f))}, constant(1.0f), {{0, 0, 0}, normalize(Vec3{0.3f, 0.2f, -1})});
+        assert(near(m, 1, 1e-4f));
     }
 
     std::printf("OK\n");
