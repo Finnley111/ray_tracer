@@ -385,6 +385,7 @@ static SceneDesc showcase_desc() {
 enum class Mode { PT, Hybrid, BDPT };
 static Image showcase(Mode m, int spp) {
     SceneDesc d = showcase_desc();
+    d.scene.clamp = 5;  // firefly clamp; ~0.1% darker overall (bdptbench stays unclamped)
     d.hybrid = m == Mode::Hybrid;
     d.bdpt = m == Mode::BDPT;
     if (m == Mode::PT) d.spp = spp;

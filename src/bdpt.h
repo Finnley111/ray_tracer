@@ -289,10 +289,12 @@ inline Image render_bdpt(Scene scene, const std::vector<Material>& mats, const S
                                 SampledSpectrum c = b.connect(sl, t, L, C, w, splat, u, v);
                                 if (!splat) { Lp += c; continue; }
                                 XYZ e = to_xyz(c, w);
+                                clamp_luminance(e, scene.clamp);
                                 XYZ& px = splats[th][size_t(std::min(int(v * H), H - 1)) * W + std::min(int(u * W), W - 1)];
                                 for (int i = 0; i < 3; ++i) px[i] += e[i];
                             }
                         XYZ e = to_xyz(Lp, w);
+                        clamp_luminance(e, scene.clamp);
                         for (int i = 0; i < 3; ++i) acc[i] += e[i];
                     }
                     pix[size_t(y) * W + x] = acc;

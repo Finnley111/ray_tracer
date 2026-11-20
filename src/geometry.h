@@ -158,6 +158,7 @@ struct Scene {
     struct Light { int shape, idx; };
     std::vector<Light> lights;
     bool use_nee = true;
+    float clamp = 0;  // max luminance (Y) per sample, 0 = off; biased firefly removal
 
     template <class M>
     void collect_lights(const std::vector<M>& mats) {

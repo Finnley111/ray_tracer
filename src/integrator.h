@@ -56,6 +56,14 @@ inline bool roulette(int depth, SampledSpectrum& beta, Rng& rng) {
     return true;
 }
 
+// Firefly clamp: scale c down so its luminance is at most max (0 = off). Keeps hue,
+// loses energy (biased) — only the rare very bright samples are touched.
+inline void clamp_luminance(XYZ& c, float max) {
+    if (max <= 0 || c[1] <= max) return;
+    float k = max / c[1];
+    for (float& v : c) v *= k;
+}
+
 inline float power_heuristic(float a, float b) { return a * a / (a * a + b * b); }
 
 // Path tracer with next-event estimation at diffuse vertices, combined with BSDF
@@ -128,6 +136,7 @@ inline void render_row(const Scene& scene, const std::vector<Material>& mats, co
             auto w = SampledWavelengths::sample_uniform(rng.next());  // trace() may modify
             Ray r = cam.ray((x + rng.next()) / img.w, (y + rng.next()) / img.h);
             XYZ c = to_xyz(trace(scene, mats, background, r, w, rng, skip_diffuse_first), w);
+            clamp_luminance(c, scene.clamp);
             for (int i = 0; i < 3; ++i) acc[i] += c[i];
         }
         RGB c = xyz_to_linear_srgb(acc);
@@ -193,6 +202,7 @@ inline void light_path(const Scene& scene, const std::vector<Material>& mats, co
                 // f * cos_x * We * cos_c / d^2, with pinhole We = 1 / (film_area * cos_c^4)
                 float k = splat * cos_x / (std::numbers::pi_v<float> * d * d * cos_c * cos_c * cos_c);
                 XYZ c = to_xyz(beta * w.eval(m.albedo) * k, w);
+                clamp_luminance(c, scene.clamp * float(W) * H / float(n_paths));  // clamp as a per-pixel sample
                 XYZ& px = film[size_t(std::min(int(v * H), H - 1)) * W + std::min(int(u * W), W - 1)];
                 for (int i = 0; i < 3; ++i) px[i] += c[i];
             }

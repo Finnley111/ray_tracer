@@ -394,14 +394,14 @@ int main() {
     // RT-018: scene file parsing, plus errors with line numbers.
     {
         const char* p = "rt_tests_tmp_scene.txt";
-        std::ofstream(p) << "# test\nimage 32 16\nspp 8\ncamera 0 1 5  0 0 0  45\nbackground const 0.5\n"
+        std::ofstream(p) << "# test\nimage 32 16\nspp 8\nclamp 20\ncamera 0 1 5  0 0 0  45\nbackground const 0.5\n"
                             "material w diffuse rgb 0.5 0.5 0.5\nmaterial l light blackbody 3000 4 two_sided\n"
                             "material g dielectric cauchy 1.5 0.01\nsphere 0 0 0 1 g  # inline comment\n"
                             "quad -1 2 -1 2 0 0 0 0 2 l\nbox 0 0 0 1 1 1 30 w\ntri 0 0 0 1 0 0 0 1 0 w\n";
         SceneDesc d;
         std::string err;
         assert(load_scene(p, d, err));
-        assert(d.W == 32 && d.H == 16 && d.spp == 8 && d.mats.size() == 3 && d.mats[1].two_sided);
+        assert(d.W == 32 && d.H == 16 && d.spp == 8 && d.scene.clamp == 20 && d.mats.size() == 3 && d.mats[1].two_sided);
         assert(d.scene.spheres.size() == 1 && d.scene.quads.size() == 7 && d.scene.tris.size() == 1);
         assert(near(d.background(500), 0.5f, 1e-6f) && near(d.cam.ray(0.5f, 0.5f).d.z, -0.98058f, 1e-4f));
         auto bad = [&](const char* text, const char* expect) {
@@ -413,6 +413,7 @@ int main() {
         };
         bad("material w diffuse const 1\nsphere 0 0 0 1 nope\n", ":2:");          // unknown material
         bad("spp -3\n", ":1:");                                                   // bad value
+        bad("clamp -1\n", ":1:");
         bad("material w diffuse const 1\nsphere 0 0 0 1 w extra\n", "unexpected"); // trailing junk
         bad("teapot 1 2 3\n", "unknown statement");
         bad("material a diffuse const 1\nmaterial a mirror const 1\n", "already defined");
@@ -420,6 +421,16 @@ int main() {
         bad("obj missing.obj 1 0 0 0 w\n", ":1:");                                // material checked after path
         std::remove(p);
         assert(!load_scene("no_such_scene.txt", d, err));
+    }
+
+    // Firefly clamp: luminance capped, chromaticity kept, below-cap untouched.
+    {
+        XYZ c{4, 8, 2}, d{1, 2, 3};
+        clamp_luminance(c, 2);
+        clamp_luminance(d, 2);
+        clamp_luminance(d, 0);
+        assert(near(c[0], 1, 1e-6f) && near(c[1], 2, 1e-6f) && near(c[2], 0.5f, 1e-6f));
+        assert(d[0] == 1 && d[1] == 2 && d[2] == 3);
     }
 
     // RT-019: MIS weights over all (s, t) splits of one fixed path sum to 1.

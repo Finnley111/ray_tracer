@@ -4,6 +4,7 @@ image 400 400
 spp 256
 camera 278 278 -800  278 278 0  40
 renderer hybrid 512   # light tracing for the glass sphere's caustic; spp = camera paths
+clamp 5               # firefly clamp (max luminance per sample)
 
 material white diffuse rgb 0.73 0.73 0.73
 material red   diffuse rgb 0.65 0.05 0.05

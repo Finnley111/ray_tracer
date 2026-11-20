@@ -4,6 +4,7 @@
 //   image W H                    spp N                    exposure E
 //   camera fx fy fz  ax ay az  vfov_deg
 //   background <spectrum>        renderer pt | hybrid LIGHT_PATHS_PER_PIXEL | bdpt
+//   clamp Y                      (max luminance per sample, removes fireflies; biased; 0 = off)
 //   material NAME diffuse <spectrum>
 //   material NAME mirror <spectrum>
 //   material NAME conductor gold|silver|copper
@@ -85,6 +86,8 @@ inline bool load_scene(const std::string& path, SceneDesc& d, std::string& err) 
             if (!(ss >> d.spp) || d.spp <= 0) return fail("spp N (N > 0)");
         } else if (kw == "exposure") {
             if (!num(d.exposure)) return fail("exposure E");
+        } else if (kw == "clamp") {
+            if (!num(d.scene.clamp) || d.scene.clamp < 0) return fail("clamp Y (Y >= 0)");
         } else if (kw == "camera") {
             if (!vec(cam_from) || !vec(cam_at) || !num(vfov) || vfov <= 0 || vfov >= 180) return fail("camera from(3) at(3) vfov");
             have_camera = true;
