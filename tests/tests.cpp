@@ -5,6 +5,7 @@
 #include "camera.h"
 #include "integrator.h"
 #include "metals.h"
+#include "obj.h"
 #include <random>
 #include <cassert>
 #include <cmath>
@@ -282,6 +283,28 @@ int main() {
             if (ha) { ++hits; assert(a.t == b.t && a.mat == b.mat); }
         }
         std::printf("BVH vs linear: 20000 rays, %d hits, all identical\n", hits);
+    }
+
+    // RT-015: OBJ loader. Slash forms, negative indices, fan triangulation, comments; errors.
+    {
+        const char* path = "rt_tests_tmp.obj";
+        std::ofstream(path) << "# square + triangle\nv 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nvn 0 0 1\n"
+                               "f 1/1/1 2/2/1 3//1 4\nf -4 -3 -1\no ignored\n";
+        std::vector<Triangle> t;
+        std::string err;
+        assert(load_obj(path, 7, t, err) && t.size() == 3);
+        assert(t[0].c.x == 1 && t[0].c.y == 1 && t[1].c.x == 0 && t[1].c.y == 1);  // fan: (1,2,3), (1,3,4)
+        assert(t[2].a.x == 0 && t[2].b.x == 1 && t[2].c.y == 1 && t[2].mat == 7);   // -4 -3 -1 = 1 2 4
+        std::ofstream(path) << "v 0 0 0\nv 1 0 0\nf 1 2 3\n";
+        assert(!load_obj(path, 0, t, err) && t.size() == 3 && err.find(":3:") != std::string::npos);
+        std::ofstream(path) << "v 0 0 0\nv 1 0 0\nv 1 1 0\nf 1 2\n";
+        assert(!load_obj(path, 0, t, err));
+        assert(!load_obj("does_not_exist.obj", 0, t, err));
+        std::remove(path);
+        fit_mesh(t, 2, 5, 0, 1);  // 1x1 square -> 2 tall, centred on x = 5, resting on y = 1
+        AABB b;
+        for (auto& tr : t) { b.grow(tr.a); b.grow(tr.b); b.grow(tr.c); }
+        assert(near(b.lo.y, 1, 1e-5f) && near(b.hi.y, 3, 1e-5f) && near((b.lo.x + b.hi.x) / 2, 5, 1e-5f));
     }
 
     std::printf("OK\n");

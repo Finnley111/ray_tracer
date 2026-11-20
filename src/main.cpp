@@ -5,6 +5,7 @@
 #include "integrator.h"
 #include "material.h"
 #include "metals.h"
+#include "obj.h"
 #include "spectrum.h"
 #include <chrono>
 #include <cstdio>
@@ -259,9 +260,40 @@ static Image bvhbench() {
     return b;
 }
 
+// RT-015: Stanford bunny (assets/bunny.obj, see CLAUDE.md) in BK7 glass, with a gold
+// bunny beside it, on a striped floor.
+static Image bunny(int spp) {
+    const int W = 640, H = 360;
+    std::vector<Material> mats = {
+        {constant(0.8f)}, {constant(0.03f)},     // 0, 1 stripes
+        dielectric(glass_bk7()),                 // 2 glass
+        conductor(au_eta(), au_k()),             // 3 gold
+        {constant(0.0f), d65(), 6.0f},           // 4 light
+    };
+    Scene sc;
+    std::string err;
+    std::vector<Triangle> glass_b, gold_b;
+    if (!load_obj("assets/bunny.obj", 2, glass_b, err) || !load_obj("assets/bunny.obj", 3, gold_b, err)) {
+        std::fprintf(stderr, "%s\n", err.c_str());
+        return Image(0, 0);
+    }
+    fit_mesh(glass_b, 2.0f, -1.3f, 0, 0);
+    fit_mesh(gold_b, 2.0f, 1.5f, -0.5f, 0);
+    double vol = 0;  // signed volume > 0 means faces wind outward (matters for glass)
+    for (auto& t : glass_b) vol += dot(t.a, cross(t.b, t.c)) / 6;
+    std::fprintf(stderr, "bunny: %zu triangles each, signed volume %.3f\n", glass_b.size(), vol);
+    sc.tris = glass_b;
+    sc.tris.insert(sc.tris.end(), gold_b.begin(), gold_b.end());
+    for (int i = 0; i < 40; ++i) sc.quads.push_back({{-10.0f + 0.5f * i, 0, -20}, {0, 0, 40}, {0.5f, 0, 0}, i % 2});
+    sc.quads.push_back({{-3, 6, -1}, {6, 0, 0}, {0, 0, 2}, 4});
+    Spectrum s = d65();
+    Camera cam({0, 2.2f, 6.5f}, {0, 0.9f, 0}, {0, 1, 0}, 40, float(W) / H);
+    return render(sc, mats, [s](float l) { return 0.3f * s(l); }, cam, W, H, spp, 1.0f);
+}
+
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals|glass|prism|prism-x|bvhbench> <out.ppm> [spp]\n");
+        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals|glass|prism|prism-x|bvhbench|bunny> <out.ppm> [spp]\n");
         return 2;
     }
     std::string mode = argv[1];
@@ -273,9 +305,10 @@ int main(int argc, char** argv) {
                 : mode == "prism"   ? prism(argc > 3 ? std::atoi(argv[3]) : 4096, false)
                 : mode == "prism-x" ? prism(argc > 3 ? std::atoi(argv[3]) : 4096, true)
                 : mode == "bvhbench" ? bvhbench()
+                : mode == "bunny"   ? bunny(argc > 3 ? std::atoi(argv[3]) : 256)
                                     : Image(0, 0);
     if (img.w == 0) {
-        std::fprintf(stderr, "unknown mode %s\n", argv[1]);
+        std::fprintf(stderr, "unknown mode %s (or scene failed to load)\n", argv[1]);
         return 2;
     }
     if (!write_ppm(img, argv[2])) {

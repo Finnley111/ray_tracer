@@ -13,6 +13,7 @@ Built on ICM: folders carry sequencing, files carry state. If something needs ex
 | `src/` | the renderer source (one header per concept, `main.cpp` drives it) |
 | `tests/` | `assert`-based checks, built as `rt_tests` |
 | `renders/` | product: output images (gitignored) |
+| `assets/` | downloaded meshes (gitignored) — see Build |
 
 ## Route by what just happened
 
@@ -28,6 +29,12 @@ Built on ICM: folders carry sequencing, files carry state. If something needs ex
 ```
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
 ./build/rt_tests && ./build/rt normals renders/normals.ppm   # modes: swatch, normals
+```
+
+Meshes for `rt bunny` (Stanford 3D Scanning Repository bunny, research use, not committed):
+
+```
+mkdir -p assets && curl -fL https://raw.githubusercontent.com/alecjacobson/common-3d-test-models/master/data/stanford-bunny.obj -o assets/bunny.obj
 ```
 
 ## The one rule
