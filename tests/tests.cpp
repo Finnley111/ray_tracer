@@ -260,5 +260,29 @@ int main() {
         for (int k = 0; k < 3; ++k) assert(std::fabs(a[k] - b[k]) / a[k] < 0.03);
     }
 
+    // RT-013: BVH returns exactly what the linear scan returns, for random rays in a random scene.
+    {
+        Rng rng(42);
+        auto rv = [&](float s) { return Vec3{(rng.next() - 0.5f) * s, (rng.next() - 0.5f) * s, (rng.next() - 0.5f) * s}; };
+        Scene sc;
+        for (int i = 0; i < 100; ++i) sc.spheres.push_back({rv(20), 0.1f + rng.next(), i});
+        for (int i = 0; i < 100; ++i) sc.quads.push_back({rv(20), rv(3), rv(3), 100 + i});
+        for (int i = 0; i < 100; ++i) { Vec3 a = rv(20); sc.tris.push_back({a, a + rv(3), a + rv(3), 200 + i}); }
+        sc.quads.push_back({{-10, -10, 0}, {20, 0, 0}, {0, 20, 0}, 999});  // axis-aligned, zero-thickness
+        Scene bvh = sc;
+        bvh.build();
+        assert(bvh.built() && !sc.built());
+        int hits = 0;
+        for (int i = 0; i < 20000; ++i) {
+            Ray r{rv(30), normalize(rv(2))};
+            if (i % 10 == 0) r.d = {0, 0, r.d.z < 0 ? -1.0f : 1.0f};  // axis-parallel rays: inv = inf
+            Hit a, b;
+            bool ha = sc.intersect(r, 1e-4f, 1e30f, a), hb = bvh.intersect(r, 1e-4f, 1e30f, b);
+            assert(ha == hb);
+            if (ha) { ++hits; assert(a.t == b.t && a.mat == b.mat); }
+        }
+        std::printf("BVH vs linear: 20000 rays, %d hits, all identical\n", hits);
+    }
+
     std::printf("OK\n");
 }

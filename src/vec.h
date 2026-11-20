@@ -4,6 +4,7 @@
 struct Vec3 {
     float x = 0, y = 0, z = 0;
     Vec3 operator-() const { return {-x, -y, -z}; }
+    float operator[](int i) const { return i == 0 ? x : i == 1 ? y : z; }
     Vec3& operator+=(Vec3 o) { x += o.x; y += o.y; z += o.z; return *this; }
 };
 inline Vec3 operator+(Vec3 a, Vec3 b) { return {a.x + b.x, a.y + b.y, a.z + b.z}; }

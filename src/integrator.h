@@ -97,11 +97,13 @@ inline void render_row(const Scene& scene, const std::vector<Material>& mats, co
     }
 }
 
+// Takes the scene by value and builds its BVH, so callers never need to.
 // Rows are handed out to threads through an atomic counter. Each row seeds its own
 // Rng from (seed, y), so the image is identical whatever the thread count.
-inline Image render(const Scene& scene, const std::vector<Material>& mats, const Spectrum& background,
+inline Image render(Scene scene, const std::vector<Material>& mats, const Spectrum& background,
                     const Camera& cam, int W, int H, int spp, float exposure, unsigned seed = 1,
                     unsigned threads = std::thread::hardware_concurrency(), bool skip_diffuse_first = false) {
+    if (!scene.built()) scene.build();
     Image img(W, H);
     std::atomic<int> next_row{0};
     auto worker = [&] {
@@ -159,9 +161,10 @@ inline void light_path(const Scene& scene, const std::vector<Material>& mats, co
 // Camera paths for everything not starting at a diffuse surface (lights seen directly,
 // anything seen via glass/mirrors) + light paths for everything that does. The split is
 // disjoint, so nothing is counted twice. Area-light quads only; no environment light.
-inline Image render_hybrid(const Scene& scene, const std::vector<Material>& mats, const Camera& cam, int W, int H,
+inline Image render_hybrid(Scene scene, const std::vector<Material>& mats, const Camera& cam, int W, int H,
                            int spp, long n_light_paths, float exposure, unsigned seed = 1,
                            unsigned threads = std::thread::hardware_concurrency()) {
+    if (!scene.built()) scene.build();
     Image img = render(scene, mats, constant(0.0f), cam, W, H, spp, exposure, seed, threads, true);
     std::vector<int> lights;
     for (int i = 0; i < int(scene.quads.size()); ++i)

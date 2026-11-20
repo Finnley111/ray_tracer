@@ -6,6 +6,7 @@
 #include "material.h"
 #include "metals.h"
 #include "spectrum.h"
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <numbers>
@@ -219,9 +220,48 @@ static Image prism(int spp, bool exaggerated) {
     return render_hybrid(sc, mats, cam, W, H, 256, long(spp) * W * H, 1.0f);
 }
 
+// RT-013: ~10k-triangle UV sphere + floor. Renders with and without the BVH,
+// prints both times and the largest pixel difference.
+static Image bvhbench() {
+    const int W = 160, H = 90, SPP = 4, NU = 100, NV = 50;
+    std::vector<Material> mats = {{constant(0.7f)}, {constant(0.0f), d65(), 3.0f}};
+    Scene sc;
+    auto P = [&](int i, int j) {
+        float th = std::numbers::pi_v<float> * j / NV, ph = 2 * std::numbers::pi_v<float> * i / NU;
+        return Vec3{std::sin(th) * std::cos(ph), 1 + std::cos(th), std::sin(th) * std::sin(ph)};
+    };
+    for (int i = 0; i < NU; ++i)
+        for (int j = 0; j < NV; ++j) {
+            Vec3 a = P(i, j), b = P(i + 1, j), c = P(i + 1, j + 1), d = P(i, j + 1);
+            sc.tris.insert(sc.tris.end(), {{a, b, c, 0}, {a, c, d, 0}});
+        }
+    sc.quads = {{{-6, 0, -6}, {0, 0, 12}, {12, 0, 0}, 0}, {{-1, 4, -1}, {2, 0, 0}, {0, 0, 2}, 1}};
+    Camera cam({0, 2, 5}, {0, 1, 0}, {0, 1, 0}, 40, float(W) / H);
+    auto timed = [&](const Scene& s, double& secs) {
+        auto t0 = std::chrono::steady_clock::now();
+        Image img = render(s, mats, constant(0.2f), cam, W, H, SPP, 1.0f);
+        secs = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+        return img;
+    };
+    // Linear: hand render() a scene whose "BVH" is one leaf holding every primitive.
+    Scene flat = sc;
+    flat.build();
+    flat.nodes.resize(1);
+    flat.nodes[0].count = int(flat.prims.size());
+    flat.nodes[0].start = 0;
+    double t_lin, t_bvh;
+    Image a = timed(flat, t_lin), b = timed(sc, t_bvh);
+    float diff = 0;
+    for (size_t i = 0; i < a.px.size(); ++i)
+        for (int k = 0; k < 3; ++k) diff = std::max(diff, std::fabs(a.px[i][k] - b.px[i][k]));
+    std::fprintf(stderr, "%zu triangles: linear %.2fs, BVH %.3fs (%.0fx), max pixel diff %g\n", sc.tris.size(),
+                 t_lin, t_bvh, t_lin / t_bvh, diff);
+    return b;
+}
+
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals|glass|prism|prism-x> <out.ppm> [spp]\n");
+        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals|glass|prism|prism-x|bvhbench> <out.ppm> [spp]\n");
         return 2;
     }
     std::string mode = argv[1];
@@ -232,6 +272,7 @@ int main(int argc, char** argv) {
                 : mode == "glass"   ? glass(argc > 3 ? std::atoi(argv[3]) : 512)
                 : mode == "prism"   ? prism(argc > 3 ? std::atoi(argv[3]) : 4096, false)
                 : mode == "prism-x" ? prism(argc > 3 ? std::atoi(argv[3]) : 4096, true)
+                : mode == "bvhbench" ? bvhbench()
                                     : Image(0, 0);
     if (img.w == 0) {
         std::fprintf(stderr, "unknown mode %s\n", argv[1]);
