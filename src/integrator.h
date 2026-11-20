@@ -13,9 +13,10 @@ constexpr int MAX_DEPTH = 64;
 constexpr int RR_START = 3;
 
 // Unidirectional path tracer, BSDF sampling only (NEE + MIS in RT-016).
-// Returns radiance at the path's 4 wavelengths.
+// Returns radiance at the path's 4 wavelengths. May terminate the secondary
+// wavelengths in w (dispersion), so pass the same w on to to_xyz.
 inline SampledSpectrum trace(const Scene& scene, const std::vector<Material>& mats, const Spectrum& background,
-                             Ray ray, const SampledWavelengths& w, Rng& rng) {
+                             Ray ray, SampledWavelengths& w, Rng& rng) {
     SampledSpectrum L, beta;
     beta.v.fill(1.0f);
     for (int depth = 0; depth < MAX_DEPTH; ++depth) {
@@ -31,6 +32,19 @@ inline SampledSpectrum trace(const Scene& scene, const std::vector<Material>& ma
             // Lambertian with cosine sampling: f*cos/pdf = albedo.
             beta *= w.eval(m.albedo);
             ray = {h.p, sample_cosine_hemisphere(h.n, rng.next(), rng.next())};
+        } else if (m.kind == Kind::Dielectric) {
+            Vec3 d = normalize(ray.d);
+            // IOR varies across the 4 wavelengths -> only the hero can follow one direction.
+            SampledSpectrum ior = w.eval(m.eta);
+            if (!w.secondary_terminated() && (ior[0] != ior[1] || ior[0] != ior[2] || ior[0] != ior[3])) {
+                w.terminate_secondary();
+                for (int i = 1; i < N_LAMBDA; ++i) beta[i] = 0;
+            }
+            // Same direction for all surviving wavelengths, so use the hero's IOR.
+            float eta = h.front ? ior[0] : 1 / ior[0], cos_i = -dot(d, h.n);
+            float F = fresnel_conductor(cos_i, eta, 0);  // 1 under total internal reflection
+            // Pick reflection with probability F: weight F/F = 1 either way.
+            ray = {h.p, rng.next() < F ? reflect(d, h.n) : refract(d, h.n, eta)};
         } else {
             // Perfect specular reflection: weight is the reflectance.
             Vec3 d = normalize(ray.d);
@@ -58,7 +72,7 @@ inline void render_row(const Scene& scene, const std::vector<Material>& mats, co
     for (int x = 0; x < img.w; ++x) {
         XYZ acc{0, 0, 0};
         for (int s = 0; s < spp; ++s) {
-            auto w = SampledWavelengths::sample_uniform(rng.next());
+            auto w = SampledWavelengths::sample_uniform(rng.next());  // trace() may modify
             Ray r = cam.ray((x + rng.next()) / img.w, (y + rng.next()) / img.h);
             XYZ c = to_xyz(trace(scene, mats, background, r, w, rng), w);
             for (int i = 0; i < 3; ++i) acc[i] += c[i];

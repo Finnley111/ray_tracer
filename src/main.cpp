@@ -132,9 +132,32 @@ static Image metals(int spp) {
     return render(sc, mats, sky, cam, W, H, spp, 1.0f);
 }
 
+// RT-011: BK7, SF11 (dense flint) and an exaggerated-dispersion Cauchy glass
+// over a black/white striped floor so refracted edges show colour fringes.
+static Image glass(int spp) {
+    const int W = 640, H = 300;
+    std::vector<Material> mats = {
+        {constant(0.8f)},                 // 0 white stripe
+        {constant(0.03f)},                // 1 black stripe
+        dielectric(glass_bk7()),          // 2
+        dielectric(glass_sf11()),         // 3
+        dielectric(cauchy(1.5f, 0.06f)),  // 4 ~15x BK7's dispersion
+        {constant(0.0f), d65(), 6.0f},    // 5 light
+    };
+    Scene sc;
+    for (int i = 0; i < 40; ++i)  // stripes run toward the camera
+        sc.quads.push_back({{-10.0f + 0.5f * i, 0, -20}, {0, 0, 40}, {0.5f, 0, 0}, i % 2});
+    sc.quads.push_back({{-3, 6, -1}, {6, 0, 0}, {0, 0, 2}, 5});
+    sc.spheres = {{{-2.4f, 1, 0}, 1, 2}, {{0, 1, 0}, 1, 3}, {{2.4f, 1, 0}, 1, 4}};
+    Spectrum s = d65();
+    Spectrum sky = [s](float l) { return 0.3f * s(l); };
+    Camera cam({0, 2.2f, 7}, {0, 0.9f, 0}, {0, 1, 0}, 38, float(W) / H);
+    return render(sc, mats, sky, cam, W, H, spp, 1.0f);
+}
+
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals> <out.ppm> [spp]\n");
+        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals|glass> <out.ppm> [spp]\n");
         return 2;
     }
     std::string mode = argv[1];
@@ -142,6 +165,7 @@ int main(int argc, char** argv) {
                 : mode == "lights"  ? lights()
                 : mode == "cornell" ? cornell(argc > 3 ? std::atoi(argv[3]) : 1024)
                 : mode == "metals"  ? metals(argc > 3 ? std::atoi(argv[3]) : 256)
+                : mode == "glass"   ? glass(argc > 3 ? std::atoi(argv[3]) : 512)
                                     : Image(0, 0);
     if (img.w == 0) {
         std::fprintf(stderr, "unknown mode %s\n", argv[1]);

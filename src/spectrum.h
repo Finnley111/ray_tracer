@@ -57,6 +57,25 @@ inline Spectrum d65() {
     return sampled(std::move(pts));
 }
 
+// ---- Index of refraction (lambda in nm; coefficients in micrometres) ----
+
+// Cauchy: n = A + B / lambda^2.
+inline Spectrum cauchy(float A, float B) {
+    return [=](float l) { float u = l * 1e-3f; return A + B / (u * u); };
+}
+
+// Sellmeier: n^2 = 1 + sum B_i lambda^2 / (lambda^2 - C_i), C in um^2.
+inline Spectrum sellmeier(float B1, float B2, float B3, float C1, float C2, float C3) {
+    return [=](float l) {
+        float u2 = l * l * 1e-6f;
+        return std::sqrt(1 + B1 * u2 / (u2 - C1) + B2 * u2 / (u2 - C2) + B3 * u2 / (u2 - C3));
+    };
+}
+
+// Schott catalogue coefficients.
+inline Spectrum glass_bk7() { return sellmeier(1.03961212f, 0.231792344f, 1.01046945f, 0.00600069867f, 0.0200179144f, 103.560653f); }
+inline Spectrum glass_sf11() { return sellmeier(1.73759695f, 0.313747346f, 1.89878101f, 0.013188707f, 0.0623068142f, 155.23629f); }
+
 // ---- Hero wavelength sampling (Wilkie et al. 2014) ----
 
 constexpr int N_LAMBDA = 4;
@@ -95,6 +114,17 @@ struct SampledWavelengths {
         SampledSpectrum r;
         for (int i = 0; i < N_LAMBDA; ++i) r[i] = s(lambda[i]);
         return r;
+    }
+
+    bool secondary_terminated() const { return pdf[1] == 0; }
+
+    // After a wavelength-dependent direction choice (dispersion) only the hero can
+    // follow the path. Zero the companions' pdf and fold their share into the hero so
+    // to_xyz stays unbiased. Idempotent.
+    void terminate_secondary() {
+        if (secondary_terminated()) return;
+        for (int i = 1; i < N_LAMBDA; ++i) pdf[i] = 0;
+        pdf[0] /= N_LAMBDA;
     }
 };
 

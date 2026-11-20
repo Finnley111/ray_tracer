@@ -123,7 +123,9 @@ int main() {
         for (int i = 0; i < N; ++i) {
             auto w = SampledWavelengths::sample_uniform(rng.next());
             SampledSpectrum L = trace(sc, mats, bg, r, w, rng);
-            sum += (L[0] + L[1] + L[2] + L[3]) / (4.0 * N);
+            // pdf-weighted, so it stays right when trace() terminates secondary wavelengths
+            for (int j = 0; j < N_LAMBDA; ++j)
+                if (w.pdf[j] > 0) sum += L[j] / (w.pdf[j] * (LAMBDA_MAX - LAMBDA_MIN)) / (N_LAMBDA * double(N));
         }
         return float(sum);
     };
@@ -184,6 +186,35 @@ int main() {
         sc.spheres = {{{0, 0, -3}, 1, 0}};
         float m = furnace(sc, {mirror(constant(1.0f))}, constant(1.0f), {{0, 0, 0}, normalize(Vec3{0.3f, 0.2f, -1})});
         assert(near(m, 1, 1e-4f));
+    }
+
+    // RT-011: Schott catalogue n_d (587.6 nm) and a dispersion sanity check
+    assert(near(glass_bk7()(587.56f), 1.5168f, 2e-4f));
+    assert(near(glass_sf11()(587.56f), 1.78472f, 2e-4f));
+    assert(glass_sf11()(450) > glass_sf11()(650) && near(cauchy(1.5f, 0.01f)(1000), 1.51f, 1e-6f));
+    // RT-011: refraction obeys Snell's law
+    {
+        Vec3 n{0, 1, 0}, d = normalize(Vec3{1, -1, 0});  // 45 degrees in
+        Vec3 t = refract(d, n, 1.5f);
+        assert(near(length(t), 1, 1e-5f) && near(t.x, std::sin(0.785398f) / 1.5f, 1e-5f) && t.y < 0);
+    }
+    // RT-011: terminate_secondary keeps the estimator unbiased and is idempotent
+    {
+        auto w = SampledWavelengths::sample_uniform(0.25f);
+        float p0 = w.pdf[0];
+        w.terminate_secondary();
+        w.terminate_secondary();
+        assert(w.pdf[1] == 0 && w.pdf[3] == 0 && near(w.pdf[0], p0 / N_LAMBDA, 1e-9f));
+    }
+    // RT-011: glass furnace. Lossless glass sphere under a sky of 1 -> 1, dispersive or not.
+    {
+        Scene sc;
+        sc.spheres = {{{0, 0, -3}, 1, 0}};
+        Ray r{{0, 0, 0}, normalize(Vec3{0.2f, 0.1f, -1})};
+        float g = furnace(sc, {dielectric(constant(1.5f))}, constant(1.0f), r);
+        float f = furnace(sc, {dielectric(glass_sf11())}, constant(1.0f), r);
+        std::printf("glass furnace: %.4f (1), dispersive %.4f (1)\n", g, f);
+        assert(near(g, 1, 0.01f) && near(f, 1, 0.02f));
     }
 
     std::printf("OK\n");

@@ -13,10 +13,11 @@ struct Rng {
     float next() { return std::uniform_real_distribution<float>(0.0f, 1.0f)(g); }
 };
 
-enum class Kind { Diffuse, Mirror, Conductor };
+enum class Kind { Diffuse, Mirror, Conductor, Dielectric };
 
 // Any material may also emit (two-sided). Fields used per kind:
 //   Diffuse: albedo.  Mirror: albedo = reflectance.  Conductor: eta, k (smooth, Fresnel).
+//   Dielectric: eta (smooth glass, in air; wavelength-dependent eta = dispersion).
 struct Material {
     Spectrum albedo = constant(0.0f);
     Spectrum emission = constant(0.0f);
@@ -26,6 +27,7 @@ struct Material {
 };
 
 inline Material mirror(Spectrum r) { return {r, constant(0), 0, Kind::Mirror}; }
+inline Material dielectric(Spectrum eta) { return {constant(0), constant(0), 0, Kind::Dielectric, eta}; }
 inline Material conductor(Spectrum eta, Spectrum k) { return {constant(0), constant(0), 0, Kind::Conductor, eta, k}; }
 
 // Unpolarised Fresnel reflectance of a conductor with complex IOR eta + ik (relative to the
@@ -42,6 +44,14 @@ inline float fresnel_conductor(float cos_i, float eta, float k) {
 }
 
 inline Vec3 reflect(Vec3 d, Vec3 n) { return d - n * (2 * dot(d, n)); }
+
+// Refract unit d through a surface with unit normal n facing the incoming side.
+// eta = n_transmitted / n_incident. Caller must have ruled out total internal reflection.
+inline Vec3 refract(Vec3 d, Vec3 n, float eta) {
+    float cos_i = -dot(d, n);
+    float cos_t = std::sqrt(std::max(0.0f, 1 - (1 - cos_i * cos_i) / (eta * eta)));
+    return d / eta + n * (cos_i / eta - cos_t);
+}
 
 // Cosine-weighted direction in the hemisphere around unit normal n (pdf = cos/pi).
 // Orthonormal basis: Duff et al. 2017, "Building an Orthonormal Basis, Revisited".
