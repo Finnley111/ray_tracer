@@ -155,9 +155,73 @@ static Image glass(int spp) {
     return render(sc, mats, sky, cam, W, H, spp, 1.0f);
 }
 
+// RT-012: light behind a slit -> equilateral prism -> white screen. The beam path is
+// computed for 550 nm at minimum deviation, so the slit, light and screen follow the glass.
+// The rainbow is a caustic, so this uses render_hybrid (light tracing); spp here is light
+// paths per pixel.
+static Image prism(int spp, bool exaggerated) {
+    const int W = 480, H = 270;
+    Spectrum ior = exaggerated ? cauchy(1.5f, 0.05f) : glass_sf11();
+    std::vector<Material> mats = {
+        {constant(0.8f)},                   // 0 screen
+        {constant(0.02f)},                  // 1 slit wall (black)
+        dielectric(ior),                    // 2 prism
+        {constant(0.0f), d65(), 1500.0f},   // 3 light
+        {constant(0.15f)},                  // 4 floor
+    };
+    Scene sc;
+    const float S = 1.2f, PH = 1.4f, Ht = S * std::sqrt(3.0f) / 2;
+    const Vec3 up{0, PH, 0}, A{0, 0, 2 * Ht / 3}, B1{-S / 2, 0, -Ht / 3}, B2{S / 2, 0, -Ht / 3};
+    sc.tris = {{A, B1, B2, 2}, {A + up, B1 + up, B2 + up, 2}};
+    for (auto [p, q] : {std::pair{A, B1}, {B1, B2}, {B2, A}})
+        sc.tris.insert(sc.tris.end(), {{p, q, q + up, 2}, {p, q + up, p + up, 2}});
+    orient_convex(sc.tris);
+
+    // Inside the prism the minimum-deviation ray runs parallel to the base (+x).
+    // Outward face normals are horizontal; refract the inside ray out of each face.
+    auto outward = [](Vec3 p, Vec3 q, Vec3 opp) {
+        Vec3 n = normalize(cross(q - p, Vec3{0, 1, 0}));
+        return dot(n, p - opp) > 0 ? n : -n;
+    };
+    Vec3 nL = outward(A, B1, B2), nR = outward(A, B2, B1);
+    Vec3 E = (A + B1) / 2 + up / 2, X = (A + B2) / 2 + up / 2;  // entry, exit points
+    auto exit_dir = [&](float l) { return refract({1, 0, 0}, -nR, 1 / ior(l)); };
+    Vec3 d_in = -refract({-1, 0, 0}, -nL, 1 / ior(550)), d_out = exit_dir(550);
+    std::fprintf(stderr, "prism: n(550)=%.4f deviation %.1f deg, 450-650 nm spread %.2f deg\n", ior(550),
+                 std::acos(dot(d_in, d_out)) * 180 / std::numbers::pi_v<float>,
+                 std::acos(dot(exit_dir(450), exit_dir(650))) * 180 / std::numbers::pi_v<float>);
+
+    // Slit wall perpendicular to the incoming beam, 0.6 before the prism; 4 quads around the gap.
+    const Vec3 Y{0, 1, 0};
+    Vec3 side = normalize(cross(Y, d_in)), C = E - d_in * 0.6f;
+    C.y = 0;
+    const float SW = 0.12f, WALL = 3, WH = 2.5f, y0 = 0.35f, y1 = 1.05f;
+    sc.quads = {{C + side * (SW / 2), side * (WALL - SW / 2), Y * WH, 1},
+                {C - side * WALL, side * (WALL - SW / 2), Y * WH, 1},
+                {C - side * (SW / 2), side * SW, Y * y0, 1},
+                {C - side * (SW / 2) + Y * y1, side * SW, Y * (WH - y1), 1}};
+    // Light: 4 cm wide strip 4 units behind the slit -> ~2.3 deg horizontal divergence.
+    Vec3 Lc = C - d_in * 4.0f;
+    sc.quads.push_back({Lc - side * 0.02f + Y * 0.2f, side * 0.04f, Y * 1.0f, 3});
+    // Screen: 4 wide, 4 units down the 550 nm exit ray, facing back at the prism.
+    Vec3 sside = normalize(cross(Y, d_out)), Sc = X + d_out * 4.0f;
+    Sc.y = 0;
+    sc.quads.push_back({Sc - sside * 2.0f, sside * 4.0f, Y * 2.5f, 0});
+    sc.quads.push_back({{-20, 0, -20}, {0, 0, 40}, {40, 0, 0}, 4});  // floor
+
+    // Dim overhead fill light so the prism and screen are visible.
+    mats.push_back({constant(0.0f), d65(), 0.25f});
+    sc.quads.push_back({X + Y * 4.0f - Vec3{2, 0, 2}, {4, 0, 0}, {0, 0, 4}, 5});
+    // Camera beside the beam, up and back from the prism, looking at the screen.
+    Vec3 look = X + d_out * 2.8f;
+    look.y = 0.6f;
+    Camera cam(X - d_out * 1.5f + sside * -2.5f + Y * 2.5f, look, Y, 55, float(W) / H);
+    return render_hybrid(sc, mats, cam, W, H, 256, long(spp) * W * H, 1.0f);
+}
+
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals|glass> <out.ppm> [spp]\n");
+        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals|glass|prism|prism-x> <out.ppm> [spp]\n");
         return 2;
     }
     std::string mode = argv[1];
@@ -166,6 +230,8 @@ int main(int argc, char** argv) {
                 : mode == "cornell" ? cornell(argc > 3 ? std::atoi(argv[3]) : 1024)
                 : mode == "metals"  ? metals(argc > 3 ? std::atoi(argv[3]) : 256)
                 : mode == "glass"   ? glass(argc > 3 ? std::atoi(argv[3]) : 512)
+                : mode == "prism"   ? prism(argc > 3 ? std::atoi(argv[3]) : 4096, false)
+                : mode == "prism-x" ? prism(argc > 3 ? std::atoi(argv[3]) : 4096, true)
                                     : Image(0, 0);
     if (img.w == 0) {
         std::fprintf(stderr, "unknown mode %s\n", argv[1]);

@@ -217,5 +217,48 @@ int main() {
         assert(near(g, 1, 0.01f) && near(f, 1, 0.02f));
     }
 
+    // RT-012: triangle hit/miss, normal from winding, orient_convex
+    {
+        Triangle t{{0, 0, -2}, {1, 0, -2}, {0, 1, -2}, 0};  // (b-a)x(c-a) = +z
+        Hit h;
+        assert(t.intersect({{0.2f, 0.2f, 0}, {0, 0, -1}}, 1e-4f, 1e30f, h));
+        assert(near(h.t, 2, 1e-5f) && h.front && near(h.n.z, 1, 1e-5f));
+        assert(!t.intersect({{0.8f, 0.8f, 0}, {0, 0, -1}}, 1e-4f, 1e30f, h));  // outside u+v<=1
+        assert(!t.intersect({{0.2f, 0.2f, 0}, {1, 0, 0}}, 1e-4f, 1e30f, h));   // parallel
+        // Tetrahedron with one face wound inward: orient_convex must fix it.
+        Vec3 p0{0, 0, 0}, p1{1, 0, 0}, p2{0, 1, 0}, p3{0, 0, 1};
+        std::vector<Triangle> tet = {{p0, p1, p2, 0}, {p0, p1, p3, 0}, {p0, p2, p3, 0}, {p1, p2, p3, 0}};
+        orient_convex(tet);
+        Vec3 c{0.25f, 0.25f, 0.25f};
+        for (auto& f : tet) assert(dot(cross(f.b - f.a, f.c - f.a), f.a - c) > 0);
+    }
+
+    // RT-012: project() inverts ray()
+    {
+        Camera cam({1, 2, 3}, {0, 0, 0}, {0, 1, 0}, 50, 1.5f);
+        float u, v, c;
+        Ray r = cam.ray(0.3f, 0.8f);
+        assert(cam.project(r.at(5), u, v, c) && near(u, 0.3f, 1e-4f) && near(v, 0.8f, 1e-4f));
+        assert(near(c, dot(r.d, cam.fwd), 1e-5f));
+        assert(!cam.project(cam.origin - cam.fwd, u, v, c));
+    }
+    // RT-012: hybrid (camera paths + light paths) agrees with the pure path tracer.
+    {
+        std::vector<Material> mats = {{constant(0.5f)}, {[](float l) { return 0.1f + 0.7f * gaussian(600, 40)(l); }},
+                                      {constant(0.0f), d65(), 5.0f}};
+        Scene sc;
+        sc.quads = {{{-3, 0, -3}, {0, 0, 6}, {6, 0, 0}, 0}, {{-0.5f, 2, -0.5f}, {1, 0, 0}, {0, 0, 1}, 2}};
+        sc.spheres = {{{0.6f, 0.5f, 0.3f}, 0.5f, 1}};
+        Camera cam({0, 1.5f, 4}, {0, 0.3f, 0}, {0, 1, 0}, 45, 1);
+        Image pt = render(sc, mats, constant(0.0f), cam, 24, 24, 512, 1);
+        Image hy = render_hybrid(sc, mats, cam, 24, 24, 4, 2000000, 1);
+        double a[3] = {0, 0, 0}, b[3] = {0, 0, 0};
+        for (size_t i = 0; i < pt.px.size(); ++i)
+            for (int k = 0; k < 3; ++k) a[k] += pt.px[i][k], b[k] += hy.px[i][k];
+        std::printf("PT vs hybrid mean RGB: %.4f %.4f %.4f | %.4f %.4f %.4f\n", a[0] / pt.px.size(), a[1] / pt.px.size(),
+                    a[2] / pt.px.size(), b[0] / pt.px.size(), b[1] / pt.px.size(), b[2] / pt.px.size());
+        for (int k = 0; k < 3; ++k) assert(std::fabs(a[k] - b[k]) / a[k] < 0.03);
+    }
+
     std::printf("OK\n");
 }
