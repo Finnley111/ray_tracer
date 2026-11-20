@@ -16,6 +16,6 @@ Assumes a side-project pace of **~6–8 h/week**. Start: **Mon 2026-11-23**. Tar
 
 Stretch (after Jan 31): RT-018 PNG/scene file, textures, volumes, Jakob–Hanika upsampling.
 
-**Status (2026-11-20):** RT-001 to RT-017 all done in the first session, ~10 weeks ahead of plan. Remaining: RT-018 (stretch). Candidate stretch tickets from the work so far: BDPT (glass speckle, caustics seen through glass), smooth mesh normals (glass bunny), rough materials (GGX), Beer's-law absorption.
+**Status (2026-11-20):** RT-001 to RT-018 all done in the first session, ~10 weeks ahead of plan. Candidate stretch tickets from the work so far: BDPT (glass speckle, caustics seen through glass), smooth mesh normals (glass bunny), rough materials (GGX), Beer's-law absorption.
 
 **Status rule:** at the end of each week, every ticket listed for that week should be in `tickets/03_done/`. If not, slide the table — don't silently compress later weeks.

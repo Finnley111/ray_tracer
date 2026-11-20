@@ -6,6 +6,7 @@
 #include "material.h"
 #include "metals.h"
 #include "obj.h"
+#include "scene_file.h"
 #include "spectrum.h"
 #include <chrono>
 #include <cstdio>
@@ -368,10 +369,33 @@ static Image showcase(int spp, bool hybrid) {
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: rt <swatch|normals|lights|cornell|metals|glass|prism|prism-x|bvhbench|bunny|neebench|showcase|showcase-pt> <out.ppm> [spp]\n");
+        std::fprintf(stderr, "usage: rt <scene.txt | swatch|normals|lights|cornell|metals|glass|prism|prism-x|bvhbench|bunny|neebench|showcase|showcase-pt> <out.png|out.ppm> [spp]\n"
+                     "  [spp] overrides the scene's spp (pt) or light paths per pixel (hybrid)\n");
         return 2;
     }
     std::string mode = argv[1];
+    int spp_arg = argc > 3 ? std::atoi(argv[3]) : 0;
+    if (argc > 3 && spp_arg <= 0) {
+        std::fprintf(stderr, "spp must be a positive integer\n");
+        return 2;
+    }
+    if (mode.find('.') != std::string::npos) {  // a scene file, e.g. scenes/example.txt
+        SceneDesc d;
+        std::string err;
+        if (!load_scene(mode, d, err)) {
+            std::fprintf(stderr, "%s\n", err.c_str());
+            return 2;
+        }
+        Image img = d.hybrid ? render_hybrid(d.scene, d.mats, d.cam, d.W, d.H, d.spp,
+                                             long(spp_arg ? spp_arg : d.light_paths) * d.W * d.H, d.exposure)
+                             : render(d.scene, d.mats, d.background, d.cam, d.W, d.H, spp_arg ? spp_arg : d.spp, d.exposure);
+        if (!write_image(img, argv[2])) {
+            std::fprintf(stderr, "could not write %s\n", argv[2]);
+            return 1;
+        }
+        std::printf("wrote %s\n", argv[2]);
+        return 0;
+    }
     Image img = mode == "swatch" ? swatch() : mode == "normals" ? normals()
                 : mode == "lights"  ? lights()
                 : mode == "cornell" ? cornell(argc > 3 ? std::atoi(argv[3]) : 1024)
@@ -389,7 +413,7 @@ int main(int argc, char** argv) {
         std::fprintf(stderr, "unknown mode %s (or scene failed to load)\n", argv[1]);
         return 2;
     }
-    if (!write_ppm(img, argv[2])) {
+    if (!write_image(img, argv[2])) {
         std::fprintf(stderr, "could not write %s\n", argv[2]);
         return 1;
     }

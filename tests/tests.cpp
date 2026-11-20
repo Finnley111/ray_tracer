@@ -6,6 +6,7 @@
 #include "integrator.h"
 #include "metals.h"
 #include "obj.h"
+#include "scene_file.h"
 #include <random>
 #include <cassert>
 #include <cmath>
@@ -374,6 +375,50 @@ int main() {
         assert(worst < 0.08f);
         Spectrum white = rgb_spectrum(1, 1, 1);
         assert(white(500) > 0.99f && white(380) > 0.99f);
+    }
+
+    // RT-018: PNG writer. Signature, IHDR size, stored-deflate length, IEND CRC.
+    {
+        Image img(70, 1000);  // raw = 1000 * 211 bytes -> 4 stored blocks
+        const char* p = "rt_tests_tmp.png";
+        assert(write_image(img, p));
+        std::ifstream f(p, std::ios::binary);
+        std::string data((std::istreambuf_iterator<char>(f)), {});
+        std::remove(p);
+        size_t raw = 1000 * (1 + 3 * 70), blocks = (raw + 65534) / 65535;
+        assert(data.size() == 8 + 25 + 12 + (2 + 5 * blocks + raw + 4) + 12);
+        assert(data.compare(0, 8, "\x89PNG\r\n\x1a\n") == 0 && data.compare(12, 4, "IHDR") == 0);
+        assert(data.compare(data.size() - 4, 4, "\xae\x42\x60\x82") == 0);  // CRC of "IEND"
+    }
+    // RT-018: scene file parsing, plus errors with line numbers.
+    {
+        const char* p = "rt_tests_tmp_scene.txt";
+        std::ofstream(p) << "# test\nimage 32 16\nspp 8\ncamera 0 1 5  0 0 0  45\nbackground const 0.5\n"
+                            "material w diffuse rgb 0.5 0.5 0.5\nmaterial l light blackbody 3000 4 two_sided\n"
+                            "material g dielectric cauchy 1.5 0.01\nsphere 0 0 0 1 g  # inline comment\n"
+                            "quad -1 2 -1 2 0 0 0 0 2 l\nbox 0 0 0 1 1 1 30 w\ntri 0 0 0 1 0 0 0 1 0 w\n";
+        SceneDesc d;
+        std::string err;
+        assert(load_scene(p, d, err));
+        assert(d.W == 32 && d.H == 16 && d.spp == 8 && d.mats.size() == 3 && d.mats[1].two_sided);
+        assert(d.scene.spheres.size() == 1 && d.scene.quads.size() == 7 && d.scene.tris.size() == 1);
+        assert(near(d.background(500), 0.5f, 1e-6f) && near(d.cam.ray(0.5f, 0.5f).d.z, -0.98058f, 1e-4f));
+        auto bad = [&](const char* text, const char* expect) {
+            std::ofstream(p) << text;
+            SceneDesc e;
+            bool ok = load_scene(p, e, err);
+            if (ok || err.find(expect) == std::string::npos) std::printf("unexpected: %s\n", err.c_str());
+            assert(!ok && err.find(expect) != std::string::npos);
+        };
+        bad("material w diffuse const 1\nsphere 0 0 0 1 nope\n", ":2:");          // unknown material
+        bad("spp -3\n", ":1:");                                                   // bad value
+        bad("material w diffuse const 1\nsphere 0 0 0 1 w extra\n", "unexpected"); // trailing junk
+        bad("teapot 1 2 3\n", "unknown statement");
+        bad("material a diffuse const 1\nmaterial a mirror const 1\n", "already defined");
+        bad("material m dielectric diamond\n", ":1:");
+        bad("obj missing.obj 1 0 0 0 w\n", ":1:");                                // material checked after path
+        std::remove(p);
+        assert(!load_scene("no_such_scene.txt", d, err));
     }
 
     std::printf("OK\n");

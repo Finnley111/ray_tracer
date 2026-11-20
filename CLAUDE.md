@@ -11,6 +11,7 @@ Built on ICM: folders carry sequencing, files carry state. If something needs ex
 | `plan/` | factory: architecture + scope (`PLAN.md`), milestones and dates (`TIMELINE.md`) |
 | `tickets/` | the work queue — `01_backlog/` → `02_active/` → `03_done/`; contract in `tickets/CONTEXT.md` |
 | `src/` | the renderer source (one header per concept, `main.cpp` drives it) |
+| `scenes/` | scene files (format documented at the top of `src/scene_file.h`) |
 | `tests/` | `assert`-based checks, built as `rt_tests` |
 | `renders/` | product: output images (gitignored) |
 | `assets/` | downloaded meshes (gitignored) — see Build |
@@ -28,7 +29,8 @@ Built on ICM: folders carry sequencing, files carry state. If something needs ex
 
 ```
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build -j
-./build/rt_tests && ./build/rt normals renders/normals.ppm   # modes: swatch, normals
+./build/rt_tests && ./build/rt scenes/example.txt renders/example.png [spp]
+./build/rt showcase renders/showcase.png      # built-in scenes: run ./build/rt for the list
 ```
 
 Meshes for `rt bunny` (Stanford 3D Scanning Repository bunny, research use, not committed):
