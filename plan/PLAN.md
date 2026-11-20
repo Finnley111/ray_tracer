@@ -41,7 +41,7 @@ main.cpp ── scene setup ── render loop (per pixel, N samples)
 | Parallelism | `std::thread` over tile rows | stdlib; no OpenMP/TBB needed |
 
 ## Milestones
-See `TIMELINE.md` for dates and `tickets/` for the breakdown.
+Order only, no dates. `tickets/` holds the breakdown; status is whichever folder each ticket sits in.
 
 - **M0 Foundation** — builds, writes an image, test harness runs.
 - **M1 Spectral core** — wavelengths in, correct colours out (CMFs, XYZ→sRGB, blackbody, D65).
@@ -51,3 +51,5 @@ See `TIMELINE.md` for dates and `tickets/` for the breakdown.
 - **M5 Performance** — BVH, multithreading, OBJ meshes.
 - **M6 Quality** — NEE + MIS, RGB→spectrum upsampling, PNG output, simple scene file.
 - **M7 BDPT** (stretch) — bidirectional path tracing with MIS, replacing the hybrid for caustic-heavy scenes.
+
+**Next candidates:** SPPM or VCM for specular-diffuse-specular caustics (the remaining noise in the prism), smooth mesh normals (glass bunny), rough materials (GGX), Beer's-law absorption.

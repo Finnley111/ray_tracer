@@ -2,7 +2,6 @@
 id: RT-008
 title: Area lights with blackbody/D65 emission
 milestone: M3
-week: 4
 estimate: 2h
 ---
 # RT-008 — Area lights with blackbody/D65 emission

@@ -2,7 +2,6 @@
 id: RT-017
 title: RGB→spectrum upsampling + showcase render
 milestone: M6
-week: 10
 estimate: 3h
 ---
 # RT-017 — RGB→spectrum upsampling + showcase render

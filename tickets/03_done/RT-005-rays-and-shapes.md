@@ -2,7 +2,6 @@
 id: RT-005
 title: Vec3, rays, sphere/plane/quad intersection
 milestone: M2
-week: 3
 estimate: 3h
 ---
 # RT-005 — Vec3, rays, sphere/plane/quad intersection

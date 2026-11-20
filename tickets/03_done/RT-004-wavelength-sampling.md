@@ -2,7 +2,6 @@
 id: RT-004
 title: Hero wavelength sampling + spectral swatch render
 milestone: M1
-week: 2
 estimate: 3h
 ---
 # RT-004 — Hero wavelength sampling + spectral swatch render

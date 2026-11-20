@@ -2,7 +2,6 @@
 id: RT-002
 title: CIE colour matching + XYZ to sRGB
 milestone: M1
-week: 1
 estimate: 3h
 ---
 # RT-002 — CIE colour matching + XYZ to sRGB

@@ -2,7 +2,6 @@
 id: RT-012
 title: Prism rainbow scene
 milestone: M4
-week: 8
 estimate: 3h
 ---
 # RT-012 — Prism rainbow scene

@@ -2,7 +2,6 @@
 id: RT-NNN
 title: 
 milestone: M?
-week: ?
 estimate: ?h
 ---
 # RT-NNN — title

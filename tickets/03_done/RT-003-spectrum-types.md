@@ -2,7 +2,6 @@
 id: RT-003
 title: Spectrum types: constant, blackbody, Gaussian, sampled
 milestone: M1
-week: 2
 estimate: 3h
 ---
 # RT-003 — Spectrum types: constant, blackbody, Gaussian, sampled

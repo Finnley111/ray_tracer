@@ -2,7 +2,6 @@
 id: RT-013
 title: BVH acceleration
 milestone: M5
-week: 8
 estimate: 4h
 ---
 # RT-013 — BVH acceleration

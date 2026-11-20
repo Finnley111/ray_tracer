@@ -2,7 +2,6 @@
 id: RT-001
 title: CMake build, PPM writer, test harness
 milestone: M0
-week: 1
 estimate: 2h
 ---
 # RT-001 — CMake build, PPM writer, test harness

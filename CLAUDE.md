@@ -8,7 +8,7 @@ Built on ICM: folders carry sequencing, files carry state. If something needs ex
 
 | Folder | What it holds |
 |---|---|
-| `plan/` | factory: architecture + scope (`PLAN.md`), milestones and dates (`TIMELINE.md`) |
+| `plan/` | factory: architecture, scope and milestones (`PLAN.md`) |
 | `tickets/` | the work queue — `01_backlog/` → `02_active/` → `03_done/`; contract in `tickets/CONTEXT.md` |
 | `src/` | the renderer source (one header per concept, `main.cpp` drives it) |
 | `scenes/` | scene files (format documented at the top of `src/scene_file.h`) |
@@ -22,7 +22,7 @@ Built on ICM: folders carry sequencing, files carry state. If something needs ex
 |---|---|---|
 | starting work | `tickets/CONTEXT.md`, then the lowest-numbered ticket in `02_active/` (else `01_backlog/`) | human reviews the diff + render |
 | ticket approved | move it to `03_done/`, pull the next | — |
-| asked for status | `ls tickets/*/` and compare against `plan/TIMELINE.md` | report |
+| asked for status | `ls tickets/*/` and compare against the milestones in `plan/PLAN.md` | report |
 | design question | `plan/PLAN.md` | — |
 
 ## Build

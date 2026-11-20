@@ -2,7 +2,6 @@
 id: RT-006
 title: Pinhole camera + normals render
 milestone: M2
-week: 3
 estimate: 2h
 ---
 # RT-006 — Pinhole camera + normals render

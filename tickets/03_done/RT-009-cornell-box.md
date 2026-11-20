@@ -2,7 +2,6 @@
 id: RT-009
 title: Spectral Cornell box
 milestone: M3
-week: 5-6
 estimate: 3h
 ---
 # RT-009 — Spectral Cornell box

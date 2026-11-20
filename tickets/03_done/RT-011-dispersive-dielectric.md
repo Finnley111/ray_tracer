@@ -2,7 +2,6 @@
 id: RT-011
 title: Glass with wavelength-dependent IOR
 milestone: M4
-week: 7
 estimate: 4h
 ---
 # RT-011 — Glass with wavelength-dependent IOR

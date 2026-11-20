@@ -2,7 +2,6 @@
 id: RT-019
 title: Bidirectional path tracing (BDPT) with MIS
 milestone: M7
-week: stretch (Feb 2027)
 estimate: 12-16h
 ---
 # RT-019 — Bidirectional path tracing (BDPT) with MIS

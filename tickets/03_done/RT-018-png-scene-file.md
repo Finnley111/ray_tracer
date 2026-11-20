@@ -2,7 +2,6 @@
 id: RT-018
 title: PNG output + simple scene file
 milestone: stretch
-week: -
 estimate: 3h
 ---
 # RT-018 — PNG output + simple scene file

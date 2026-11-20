@@ -2,7 +2,6 @@
 id: RT-016
 title: Next-event estimation + MIS
 milestone: M6
-week: 10
 estimate: 5h
 ---
 # RT-016 — Next-event estimation + MIS

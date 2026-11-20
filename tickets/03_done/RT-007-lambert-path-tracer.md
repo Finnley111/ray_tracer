@@ -2,7 +2,6 @@
 id: RT-007
 title: Lambertian material + recursive path tracer
 milestone: M3
-week: 4
 estimate: 4h
 ---
 # RT-007 — Lambertian material + recursive path tracer

@@ -2,7 +2,6 @@
 id: RT-010
 title: Specular mirror + spectral conductor (Fresnel)
 milestone: M4
-week: 7
 estimate: 2h
 ---
 # RT-010 — Specular mirror + spectral conductor (Fresnel)

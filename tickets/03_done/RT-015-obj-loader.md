@@ -2,7 +2,6 @@
 id: RT-015
 title: OBJ mesh loading
 milestone: M5
-week: 9
 estimate: 3h
 ---
 # RT-015 — OBJ mesh loading
