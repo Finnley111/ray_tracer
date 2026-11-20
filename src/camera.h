@@ -31,5 +31,18 @@ struct Camera {
         return u >= 0 && u < 1 && v >= 0 && v < 1;
     }
 
+    // Solid-angle pdf of a camera ray in direction w (uniform over the film) and the
+    // pinhole importance We; both 0 outside the frame. pdf = 1/(A cos^3), We = 1/(A cos^4).
+    float pdf_dir(Vec3 w) const {
+        float u, v, c;
+        if (!project(origin + w, u, v, c)) return 0;
+        return 1 / (film_area * c * c * c);
+    }
+    float importance(Vec3 w) const {
+        float u, v, c;
+        if (!project(origin + w, u, v, c)) return 0;
+        return 1 / (film_area * c * c * c * c);
+    }
+
     Ray ray(float u, float v) const { return {origin, normalize(top_left + horiz * u - vert * v - origin)}; }
 };

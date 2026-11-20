@@ -37,7 +37,7 @@ main.cpp ── scene setup ── render loop (per pixel, N samples)
 | RGB albedos | Smits-style upsampling first; Jakob–Hanika 2019 later if needed | Smits is ~30 lines; JH needs a precomputed table |
 | Dispersion | Cauchy / Sellmeier IOR per λ (BK7, flint) | gives the prism rainbow |
 | Sampling | random (`std::mt19937` per thread) → later NEE + MIS | correctness first |
-| Caustics | light tracing + camera paths, split by "is the first camera hit diffuse?" (`render_hybrid`) | path tracing alone can't find a light through a slit and prism; full BDPT is a stretch goal |
+| Caustics | light tracing + camera paths, split by "is the first camera hit diffuse?" (`render_hybrid`); BDPT (`render_bdpt`) as an opt-in general renderer | path tracing alone can't find a light through a slit and prism. BDPT measured *no better* than the hybrid on the showcase: the remaining noise is SDS paths, which need photon mapping / VCM (RT-019 notes) |
 | Parallelism | `std::thread` over tile rows | stdlib; no OpenMP/TBB needed |
 
 ## Milestones

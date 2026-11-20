@@ -169,7 +169,7 @@ static Image glass(int spp) {
 // computed for 550 nm at minimum deviation, so the slit, light and screen follow the glass.
 // The rainbow is a caustic, so this uses render_hybrid (light tracing); spp here is light
 // paths per pixel.
-static Image prism(int spp, bool exaggerated) {
+static SceneDesc prism_desc(bool exaggerated) {
     const int W = 480, H = 270;
     Spectrum ior = exaggerated ? cauchy(1.5f, 0.05f) : glass_sf11();
     std::vector<Material> mats = {
@@ -225,9 +225,18 @@ static Image prism(int spp, bool exaggerated) {
     // Camera beside the beam, up and back from the prism, looking at the screen.
     Vec3 look = X + d_out * 2.8f;
     look.y = 0.6f;
-    Camera cam(X - d_out * 1.5f + sside * -2.5f + Y * 2.5f, look, Y, 55, float(W) / H);
-    return render_hybrid(sc, mats, cam, W, H, 256, long(spp) * W * H, 1.0f);
+    SceneDesc d;
+    d.scene = sc;
+    d.mats = mats;
+    d.cam = Camera(X - d_out * 1.5f + sside * -2.5f + Y * 2.5f, look, Y, 55, float(W) / H);
+    d.W = W;
+    d.H = H;
+    d.spp = 256;  // camera paths
+    d.hybrid = true;
+    d.light_paths = 4096;
+    return d;
 }
+static Image prism(int spp, bool exaggerated) { return render_desc(prism_desc(exaggerated), spp); }
 
 // RT-013: ~10k-triangle UV sphere + floor. Renders with and without the BVH,
 // prints both times and the largest pixel difference.
@@ -340,7 +349,8 @@ static Image neebench() {
 // blackbody ceiling light, an SF11 glass prism and a gold sphere (measured n,k).
 // hybrid: light tracing for diffuse-first paths, so the prism/gold caustics on the
 // floor converge; spp is then light paths per pixel (camera paths fixed at 512).
-static Image showcase(int spp, bool hybrid) {
+// bdpt: bidirectional path tracing (RT-019); spp = samples per pixel.
+static SceneDesc showcase_desc() {
     const int W = 500, H = 500;
     std::vector<Material> mats = {
         {rgb_spectrum(0.73f, 0.73f, 0.73f)},         // 0 white
@@ -362,15 +372,117 @@ static Image showcase(int spp, bool hybrid) {
     for (auto [p, q] : {std::pair{A, B1}, {B1, B2}, {B2, A}})
         sc.tris.insert(sc.tris.end(), {{p, q, q + up, 4}, {p, q + up, p + up, 4}});
     orient_convex(sc.tris);
-    Camera cam = cornell_camera();
-    if (hybrid) return render_hybrid(sc, mats, cam, W, H, 512, long(spp) * W * H, 1.0f);
-    return render(sc, mats, constant(0.0f), cam, W, H, spp, 1.0f);
+    SceneDesc d;
+    d.scene = sc;
+    d.mats = mats;
+    d.cam = cornell_camera();
+    d.W = W;
+    d.H = H;
+    d.spp = 512;  // camera paths (hybrid) / samples (pt)
+    d.light_paths = 1024;
+    return d;
+}
+enum class Mode { PT, Hybrid, BDPT };
+static Image showcase(Mode m, int spp) {
+    SceneDesc d = showcase_desc();
+    d.hybrid = m == Mode::Hybrid;
+    d.bdpt = m == Mode::BDPT;
+    if (m == Mode::PT) d.spp = spp;
+    return render_desc(d, m == Mode::PT ? 0 : spp);
+}
+
+// RT-019 acceptance numbers.
+// (a) Prism: BDPT vs hybrid mean over the screen's bounding box (the caustic).
+// (b) Showcase at equal wall-clock time: BDPT vs hybrid two-seed noise (display-clamped,
+//     as neebench) over the prism's and the gold sphere's screen bounding boxes, and overall.
+static Image bdptbench() {
+    using clk = std::chrono::steady_clock;
+    auto secs = [](clk::time_point t0) { return std::chrono::duration<double>(clk::now() - t0).count(); };
+    struct Box { int x0, y0, x1, y1; };
+    auto bbox = [](const SceneDesc& d, std::initializer_list<Vec3> pts) {
+        Box b{d.W, d.H, 0, 0};
+        for (Vec3 p : pts) {
+            float u, v, c;
+            if (!d.cam.project(p, u, v, c)) continue;
+            int x = int(u * d.W), y = int(v * d.H);
+            b = {std::min(b.x0, x), std::min(b.y0, y), std::max(b.x1, x + 1), std::max(b.y1, y + 1)};
+        }
+        return b;
+    };
+    auto mean = [](const Image& im, Box b) {
+        double m = 0;
+        for (int y = b.y0; y < b.y1; ++y)
+            for (int x = b.x0; x < b.x1; ++x) for (float c : im.px[size_t(y) * im.w + x]) m += c;
+        return m / (3.0 * (b.x1 - b.x0) * (b.y1 - b.y0));
+    };
+    auto noise = [](const Image& a, const Image& b, Box r) {
+        double e = 0;
+        for (int y = r.y0; y < r.y1; ++y)
+            for (int x = r.x0; x < r.x1; ++x)
+                for (int k = 0; k < 3; ++k) {
+                    size_t i = size_t(y) * a.w + x;
+                    double d = std::clamp(a.px[i][k], 0.0f, 1.0f) - std::clamp(b.px[i][k], 0.0f, 1.0f);
+                    e += d * d;
+                }
+        return std::sqrt(e / (3.0 * (r.x1 - r.x0) * (r.y1 - r.y0)) / 2);
+    };
+
+    {  // (a) prism caustic
+        SceneDesc d = prism_desc(false);
+        const Quad* scr = nullptr;
+        for (auto& q : d.scene.quads) if (q.mat == 0) scr = &q;
+        Box b = bbox(d, {scr->q, scr->q + scr->u, scr->q + scr->v, scr->q + scr->u + scr->v});
+        auto t0 = clk::now();
+        double mh = mean(render_desc(d, 1024), b);
+        double th = secs(t0);
+        d.hybrid = false;
+        d.bdpt = true;
+        t0 = clk::now();
+        double mb = mean(render_desc(d, 64), b);
+        std::fprintf(stderr, "prism screen mean: hybrid %.5f (%.0fs)  bdpt %.5f (%.0fs)  diff %.2f%%\n", mh, th, mb,
+                     secs(t0), 100 * std::fabs(mb - mh) / mh);
+    }
+
+    // (b) showcase, equal time
+    SceneDesc h = showcase_desc(), bd = showcase_desc();
+    h.hybrid = true;
+    h.spp = 64;
+    h.light_paths = 128;
+    bd.bdpt = true;
+    const Sphere& gold = h.scene.spheres[0];
+    Vec3 gr{gold.r, gold.r, gold.r};
+    Box gbox = bbox(h, {gold.c - gr, gold.c + gr, gold.c + Vec3{gr.x, -gr.y, gr.z}, gold.c + Vec3{-gr.x, gr.y, -gr.z},
+                        gold.c + Vec3{gr.x, gr.y, -gr.z}, gold.c + Vec3{-gr.x, -gr.y, gr.z}, gold.c + Vec3{gr.x, -gr.y, -gr.z},
+                        gold.c + Vec3{-gr.x, gr.y, gr.z}});
+    Box pbox{h.W, h.H, 0, 0};
+    for (auto& t : h.scene.tris) {
+        Box tb = bbox(h, {t.a, t.b, t.c});
+        pbox = {std::min(pbox.x0, tb.x0), std::min(pbox.y0, tb.y0), std::max(pbox.x1, tb.x1), std::max(pbox.y1, tb.y1)};
+    }
+    Box all{0, 0, h.W, h.H};
+    auto t0 = clk::now();
+    Image h1 = render_desc(h, 0, 1), h2 = render_desc(h, 0, 2);
+    double th = secs(t0) / 2;
+    t0 = clk::now();
+    render_desc(bd, 4, 9);
+    int spp_b = std::max(1, int(4 * th / secs(t0) + 0.5));
+    t0 = clk::now();
+    Image b1 = render_desc(bd, spp_b, 1), b2 = render_desc(bd, spp_b, 2);
+    double tb = secs(t0) / 2;
+    std::fprintf(stderr, "showcase equal time: hybrid 64 cam + 128 light ppp %.1fs | bdpt %d spp %.1fs\n", th, spp_b, tb);
+    std::fprintf(stderr, "  noise   prism %.4f -> %.4f (%.2fx)   gold %.4f -> %.4f (%.2fx)   all %.4f -> %.4f (%.2fx)\n",
+                 noise(h1, h2, pbox), noise(b1, b2, pbox), noise(h1, h2, pbox) / noise(b1, b2, pbox), noise(h1, h2, gbox),
+                 noise(b1, b2, gbox), noise(h1, h2, gbox) / noise(b1, b2, gbox), noise(h1, h2, all), noise(b1, b2, all),
+                 noise(h1, h2, all) / noise(b1, b2, all));
+    std::fprintf(stderr, "  mean all: hybrid %.4f  bdpt %.4f\n", (mean(h1, all) + mean(h2, all)) / 2, (mean(b1, all) + mean(b2, all)) / 2);
+    write_image(h1, "renders/bench_hybrid.png");
+    return b1;
 }
 
 int main(int argc, char** argv) {
     if (argc < 3) {
-        std::fprintf(stderr, "usage: rt <scene.txt | swatch|normals|lights|cornell|metals|glass|prism|prism-x|bvhbench|bunny|neebench|showcase|showcase-pt> <out.png|out.ppm> [spp]\n"
-                     "  [spp] overrides the scene's spp (pt) or light paths per pixel (hybrid)\n");
+        std::fprintf(stderr, "usage: rt <scene.txt | swatch|normals|lights|cornell|metals|glass|prism|prism-x|bvhbench|bunny|neebench|showcase|showcase-pt|showcase-bdpt|bdptbench> <out.png|out.ppm> [spp]\n"
+                     "  [spp] overrides the scene's spp (pt, bdpt) or light paths per pixel (hybrid)\n");
         return 2;
     }
     std::string mode = argv[1];
@@ -386,9 +498,7 @@ int main(int argc, char** argv) {
             std::fprintf(stderr, "%s\n", err.c_str());
             return 2;
         }
-        Image img = d.hybrid ? render_hybrid(d.scene, d.mats, d.cam, d.W, d.H, d.spp,
-                                             long(spp_arg ? spp_arg : d.light_paths) * d.W * d.H, d.exposure)
-                             : render(d.scene, d.mats, d.background, d.cam, d.W, d.H, spp_arg ? spp_arg : d.spp, d.exposure);
+        Image img = render_desc(d, spp_arg);
         if (!write_image(img, argv[2])) {
             std::fprintf(stderr, "could not write %s\n", argv[2]);
             return 1;
@@ -406,8 +516,10 @@ int main(int argc, char** argv) {
                 : mode == "bvhbench" ? bvhbench()
                 : mode == "bunny"   ? bunny(argc > 3 ? std::atoi(argv[3]) : 256)
                 : mode == "neebench" ? neebench()
-                : mode == "showcase" ? showcase(argc > 3 ? std::atoi(argv[3]) : 1024, true)
-                : mode == "showcase-pt" ? showcase(argc > 3 ? std::atoi(argv[3]) : 1024, false)
+                : mode == "showcase" ? showcase(Mode::Hybrid, argc > 3 ? std::atoi(argv[3]) : 1024)
+                : mode == "showcase-pt" ? showcase(Mode::PT, argc > 3 ? std::atoi(argv[3]) : 1024)
+                : mode == "showcase-bdpt" ? showcase(Mode::BDPT, argc > 3 ? std::atoi(argv[3]) : 256)
+                : mode == "bdptbench" ? bdptbench()
                                     : Image(0, 0);
     if (img.w == 0) {
         std::fprintf(stderr, "unknown mode %s (or scene failed to load)\n", argv[1]);

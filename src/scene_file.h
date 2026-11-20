@@ -3,7 +3,7 @@
 //
 //   image W H                    spp N                    exposure E
 //   camera fx fy fz  ax ay az  vfov_deg
-//   background <spectrum>        renderer pt | hybrid LIGHT_PATHS_PER_PIXEL
+//   background <spectrum>        renderer pt | hybrid LIGHT_PATHS_PER_PIXEL | bdpt
 //   material NAME diffuse <spectrum>
 //   material NAME mirror <spectrum>
 //   material NAME conductor gold|silver|copper
@@ -16,6 +16,7 @@
 //   obj PATH height x z base MAT                (path relative to the working directory)
 //
 // <spectrum>: rgb R G B | const V | blackbody K | d65 | gaussian MU SIGMA
+#include "bdpt.h"
 #include "camera.h"
 #include "geometry.h"
 #include "material.h"
@@ -36,7 +37,7 @@ struct SceneDesc {
     int W = 640, H = 360, spp = 64;
     float exposure = 1;
     Spectrum background = constant(0.0f);
-    bool hybrid = false;
+    bool hybrid = false, bdpt = false;
     int light_paths = 256;
 };
 
@@ -92,9 +93,11 @@ inline bool load_scene(const std::string& path, SceneDesc& d, std::string& err) 
         } else if (kw == "renderer") {
             std::string r;
             ss >> r;
-            if (r == "pt") d.hybrid = false;
+            d.hybrid = d.bdpt = false;
+            if (r == "pt") {
+            } else if (r == "bdpt") d.bdpt = true;
             else if (r == "hybrid" && ss >> d.light_paths && d.light_paths > 0) d.hybrid = true;
-            else return fail("renderer pt | hybrid LIGHT_PATHS_PER_PIXEL");
+            else return fail("renderer pt | hybrid LIGHT_PATHS_PER_PIXEL | bdpt");
         } else if (kw == "material") {
             std::string name, kind;
             if (!(ss >> name >> kind)) return fail("material NAME KIND ...");
@@ -172,4 +175,14 @@ inline bool load_scene(const std::string& path, SceneDesc& d, std::string& err) 
     }
     if (have_camera) d.cam = Camera(cam_from, cam_at, {0, 1, 0}, vfov, float(d.W) / d.H);
     return true;
+}
+
+// Render with whichever renderer the description asks for. spp_override (if > 0) replaces
+// spp for pt/bdpt and light paths per pixel for hybrid.
+inline Image render_desc(const SceneDesc& d, int spp_override = 0, unsigned seed = 1) {
+    if (d.bdpt) return render_bdpt(d.scene, d.mats, d.background, d.cam, d.W, d.H, spp_override ? spp_override : d.spp, d.exposure, seed);
+    if (d.hybrid)
+        return render_hybrid(d.scene, d.mats, d.cam, d.W, d.H, d.spp,
+                             long(spp_override ? spp_override : d.light_paths) * d.W * d.H, d.exposure, seed);
+    return render(d.scene, d.mats, d.background, d.cam, d.W, d.H, spp_override ? spp_override : d.spp, d.exposure, seed);
 }

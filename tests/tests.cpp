@@ -7,6 +7,7 @@
 #include "metals.h"
 #include "obj.h"
 #include "scene_file.h"
+#include "bdpt.h"
 #include <random>
 #include <cassert>
 #include <cmath>
@@ -419,6 +420,84 @@ int main() {
         bad("obj missing.obj 1 0 0 0 w\n", ":1:");                                // material checked after path
         std::remove(p);
         assert(!load_scene("no_such_scene.txt", d, err));
+    }
+
+    // RT-019: MIS weights over all (s, t) splits of one fixed path sum to 1.
+    {
+        std::vector<Material> mats = {{constant(0.5f)}, {constant(0.0f), d65(), 3.0f}};
+        Scene sc;
+        sc.quads = {{{-2, 0, -2}, {0, 0, 4}, {4, 0, 0}, 0},     // floor, +y
+                    {{-2, 0, -2}, {4, 0, 0}, {0, 3, 0}, 0},     // back wall, +z
+                    {{-0.5f, 2, -0.5f}, {1, 0, 0}, {0, 0, 1}, 1}};  // light, emits -y
+        sc.collect_lights(mats);
+        Camera cam({0, 1, 4}, {0, 0.5f, 0}, {0, 1, 0}, 50, 1);
+        Bdpt b{sc, mats, cam, 1};
+        // Path: camera -> floor -> back wall -> light.
+        Vec3 P[4] = {cam.origin, {0.3f, 0, 0.5f}, {-0.4f, 1.2f, -2}, {0.1f, 2, -0.2f}};
+        Vec3 N[4] = {cam.fwd, {0, 1, 0}, {0, 0, 1}, {0, -1, 0}};
+        auto make = [&](int i, VType type) {
+            Vertex v;
+            v.type = type;
+            v.p = P[i];
+            v.n = v.n_out = N[i];
+            v.mat = i == 3 ? 1 : 0;
+            v.shape = 1;
+            v.area = i == 3 ? 1.0f : 16.0f;
+            return v;
+        };
+        float total = 0;
+        for (int s = 0; s <= 3; ++s) {
+            int t = 4 - s;
+            std::vector<Vertex> C, L;
+            for (int i = 0; i < t; ++i) C.push_back(make(i, i == 0 ? VType::Camera : VType::Surface));
+            for (int j = 0; j < s; ++j) L.push_back(make(3 - j, j == 0 ? VType::Light : VType::Surface));
+            for (int i = 1; i < t; ++i) C[i].pdf_fwd = b.pdf(C[i - 1], i >= 2 ? &C[i - 2] : nullptr, C[i]);
+            for (int i = 0; i + 2 < t; ++i) C[i].pdf_rev = b.pdf(C[i + 1], &C[i + 2], C[i]);
+            if (s > 0) L[0].pdf_fwd = b.pdf_light_origin(L[0]);
+            for (int j = 1; j < s; ++j) L[j].pdf_fwd = b.pdf(L[j - 1], j >= 2 ? &L[j - 2] : nullptr, L[j]);
+            for (int j = 0; j + 2 < s; ++j) L[j].pdf_rev = b.pdf(L[j + 1], &L[j + 2], L[j]);
+            float wgt = b.mis_weight(s, t, L, C);
+            std::printf("MIS weight (s=%d, t=%d) = %.4f\n", s, t, wgt);
+            assert(wgt > 0 && wgt <= 1);
+            total += wgt;
+        }
+        std::printf("MIS weights sum: %.6f\n", total);
+        assert(near(total, 1, 1e-4f));
+    }
+    // RT-019: BDPT agrees with the path tracer in the mean.
+    {
+        auto mean = [](const Image& im) {
+            double m[3] = {0, 0, 0};
+            for (auto& p : im.px) for (int k = 0; k < 3; ++k) m[k] += p[k] / im.px.size();
+            return std::array<double, 3>{m[0], m[1], m[2]};
+        };
+        auto compare = [&](const char* name, const Scene& sc, const std::vector<Material>& mats, const Spectrum& bg,
+                           const Camera& cam, int spp_pt, int spp_bd, double tol) {
+            auto a = mean(render(sc, mats, bg, cam, 24, 24, spp_pt, 1));
+            auto b = mean(render_bdpt(sc, mats, bg, cam, 24, 24, spp_bd, 1));
+            std::printf("%s PT vs BDPT mean RGB: %.4f %.4f %.4f | %.4f %.4f %.4f\n", name, a[0], a[1], a[2], b[0], b[1], b[2]);
+            for (int k = 0; k < 3; ++k) assert(std::fabs(a[k] - b[k]) / a[k] < tol);
+        };
+        // RT-016 scene: quad + sphere light, coloured sphere.
+        std::vector<Material> mats = {{constant(0.6f)}, {[](float l) { return 0.1f + 0.7f * gaussian(500, 40)(l); }},
+                                      {constant(0.0f), blackbody(4000), 8.0f}, {constant(0.0f), d65(), 30.0f}};
+        Scene sc;
+        sc.quads = {{{-3, 0, -3}, {0, 0, 6}, {6, 0, 0}, 0}, {{-0.5f, 2, -0.5f}, {1, 0, 0}, {0, 0, 1}, 2}};
+        sc.spheres = {{{0.5f, 0.5f, 0.2f}, 0.5f, 1}, {{-1.2f, 1.2f, 0}, 0.15f, 3}};
+        Camera cam({0, 1.5f, 4}, {0, 0.3f, 0}, {0, 1, 0}, 45, 1);
+        compare("lights", sc, mats, constant(0.0f), cam, 4096, 2048, 0.02);
+        // Same scene with a dispersive glass sphere and a mirror: delta vertices + wavelength termination.
+        mats.push_back(dielectric(cauchy(1.5f, 0.02f)));
+        mats.push_back(mirror(constant(0.9f)));
+        sc.spheres.push_back({{-0.6f, 0.4f, 0.8f}, 0.4f, 4});
+        sc.spheres.push_back({{1.4f, 0.6f, -0.6f}, 0.6f, 5});
+        compare("glass+mirror", sc, mats, constant(0.0f), cam, 8192, 2048, 0.03);
+        // Inside an emitting, reflecting sphere (two-sided), with a sky that is never seen.
+        std::vector<Material> m2 = {{constant(0.8f), constant(1.0f), 0.2f}};
+        m2[0].two_sided = true;
+        Scene s2;
+        s2.spheres = {{{0, 0, 0}, 1, 0}};
+        compare("inside", s2, m2, constant(0.0f), Camera({0, 0, 0.3f}, {0, 0, -1}, {0, 1, 0}, 60, 1), 256, 128, 0.02);
     }
 
     std::printf("OK\n");
